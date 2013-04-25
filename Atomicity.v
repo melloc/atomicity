@@ -7,6 +7,7 @@
  Require Import Coq.Logic.Decidable.
  Require Import Omega.
  Require Import SfLib.
+ Require Import ListExt.
 
 Inductive conflict : Type :=
   | CNone : conflict
