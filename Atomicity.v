@@ -23,6 +23,7 @@ end.
 Eval simpl in id_eq (Id 5) (Id 6).
 Eval simpl in id_eq (Id 5) (Id 5).
 
+
 Inductive primitive : Type :=
   | Assert  : primitive
   | Plus    : primitive
@@ -30,7 +31,7 @@ Inductive primitive : Type :=
   | Acquire : primitive
   | Release : primitive.
 
-Inductive exp : Type :=
+Inductive exp : Set :=
   | EConst    : nat -> exp
   | ESyncLoc  : id -> exp
   | EFunction : list id -> exp -> exp
@@ -52,16 +53,6 @@ Inductive value : exp -> Prop :=
   | VSyncLoc : forall id, value (ESyncLoc id)
   | VFunction: forall lids exp, value (EFunction lids exp).
 
-Inductive values : list exp -> Prop :=
-  | VEmpty : values []
-  | VList : forall a b, value a -> values b -> values (a::b).
-
-Inductive thread : Type :=
-  | TExpr : exp -> thread
-  | Wrong : thread.
-
-
-
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 60).
 Notation "a ';' b" := (ESeq a b) (at level 60).
@@ -70,6 +61,35 @@ Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 60).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
 Notation "'FORK' a" := (EFork a) (at level 60).
+
+Inductive C  : Set :=
+  | C_hole   : C
+  | C_assgn  : id -> conflict -> C -> C
+  | C_prim   : list (sig value) -> C -> list exp -> C
+  | C_app_1  : C -> list id -> list exp -> C
+  | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
+  | C_if     : C -> exp -> exp -> C
+  | C_let    : id -> C -> exp -> C
+  | C_inatom: C -> C.
+
+Inductive ae : exp -> Prop :=
+  | ae_while : forall cond e, value cond -> ae (EWhile cond e)
+  | ae_if    : forall cond e1 e2, value cond -> ae (EIf cond e1 e2)
+  | ae_let   : forall id v e, value v -> ae (ELet id v e)
+  | ae_id    : forall id c, ae (EId id c)
+  | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
+  | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
+  | ae_app   : forall f F vs, value f -> Forall value vs -> ae (ECall f F vs)
+  | ae_atom  : forall e, ae (EAtomic e)
+  | ae_inatom: forall v, value v -> ae (EInAtomic v)
+  | ae_fork  : forall e, ae (EFork e).
+
+Inductive thread : Type :=
+  | TExpr : exp -> thread
+  | Wrong : thread.
+
+
+
 
 Definition i := (Id 5).
 Definition a := (EId i CNone).
@@ -187,4 +207,6 @@ Example Example2 : forall heap sync_state t t', step heap sync_state (t ++ (TExp
   discriminate.
   admit.
 Qed.
+
+
 
