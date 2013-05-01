@@ -37,7 +37,7 @@ Inductive exp : Set :=
   | EFunction : list id -> exp -> exp
   | EValue    : exp -> exp
   | EId       : id -> conflict -> exp
-  | EAssgn    : id -> conflict -> exp -> exp
+  | EAssgn    : exp -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
   | EPrim     : primitive -> list exp -> exp
   | ECall     : exp -> list exp -> list exp -> exp
@@ -53,6 +53,10 @@ Inductive value : exp -> Prop :=
   | VSyncLoc : forall id, value (ESyncLoc id)
   | VFunction: forall lids exp, value (EFunction lids exp).
 
+Inductive thread : Type :=
+  | TExpr : exp -> thread
+  | Wrong : thread.
+
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 60).
 Notation "a ';' b" := (ESeq a b) (at level 60).
@@ -63,14 +67,15 @@ Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
 Notation "'FORK' a" := (EFork a) (at level 60).
 
 Inductive C  : Set :=
-  | C_hole   : C
-  | C_assgn  : id -> conflict -> C -> C
-  | C_prim   : list (sig value) -> C -> list exp -> C
-  | C_app_1  : C -> list id -> list exp -> C
-  | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
-  | C_if     : C -> exp -> exp -> C
-  | C_let    : id -> C -> exp -> C
-  | C_inatom: C -> C.
+  | C_hole    : C
+  | C_assgn1  : C -> conflict -> exp -> C
+  | C_assgn2  : exp -> conflict -> C -> C
+  | C_prim    : list (sig value) -> C -> list exp -> C
+  | C_app_1   : C -> list id -> list exp -> C
+  | C_app_2   : sig value -> list id -> list (sig value) -> C -> list exp -> C
+  | C_if      : C -> exp -> exp -> C
+  | C_let     : id -> C -> exp -> C
+  | C_inatom  : C -> C.
 
 Inductive ae : exp -> Prop :=
   | ae_while : forall cond e, value cond -> ae (EWhile cond e)
@@ -84,14 +89,35 @@ Inductive ae : exp -> Prop :=
   | ae_inatom: forall v, value v -> ae (EInAtomic v)
   | ae_fork  : forall e, ae (EFork e).
 
-Inductive thread : Type :=
-  | TExpr : exp -> thread
-  | Wrong : thread.
+
+(* The relation that decomposes an expression into a context and  *)
+(* an expression in the hole of the context *)
+Inductive E : exp -> C -> exp -> Prop :=
+  | E_hole : forall e, E e C_hole e
+  | E_Assgn1 : forall C lhs' lhs conflict rhs,
+    E lhs C lhs' -> 
+    E (EAssgn lhs conflict rhs) lhs'
+  | E_Assgn2 : forall C rhs' lhs conflict rhs,
+    value lhs -> 
+    E rhs C rhs' -> 
+    E (EAssgn lhs conflict rhs) (C_Arhs'.
+
+  | ESeq      : exp -> exp -> exp
+  | EPrim     : primitive -> list exp -> exp
+  | ECall     : exp -> list exp -> list exp -> exp
+  | EIf       : exp -> exp -> exp -> exp
+  | EWhile    : exp -> exp -> exp
+  | ELet      : id -> exp -> exp -> exp
+  | EFork     : exp -> exp
+  | EAtomic   : exp -> exp
+  | EInAtomic : exp -> exp.
+    
 
 
 
 
-Definition i := (Id 5).
+ggp
+Definition i := (Id 5).gp
 Definition a := (EId i CNone).
 Definition b := IFE a 
                 THEN LET i ::= a IN (i % (CNone) ::= (EConst 6) )
@@ -187,7 +213,9 @@ Inductive step : heap -> sync_state -> list thread -> Prop :=
   | SWrong : forall p (es : list exp) heap sync sync' t t',
              I p es sync = None ->
              step heap sync (t ++ (TExpr (EPrim p es))::t') ->
-             step heap sync' (t ++ (Wrong)::t').
+             step heap sync' (t ++ (Wrong)::t')
+  | SApp : forall args body tag vs heap sync sync' t t',
+             step heap sync (t ++ (TExpr (ECall 
 
 Example Example1 : forall heap sync_state t t', step heap sync_state (t ++ (TExpr ((EConst 1) p+ 2))::t') ->
   step heap sync_state (t ++ (TExpr (EConst 3))::t').
