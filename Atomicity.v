@@ -39,7 +39,7 @@ Inductive exp : Set :=
   | EAssgn    : id -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
   | EPrim     : primitive -> list exp -> exp
-  | EApp     : exp -> list id -> list exp -> exp
+  | EApp      : exp -> list id -> list exp -> exp
   | EIf       : exp -> exp -> exp -> exp
   | EWhile    : exp -> exp -> exp
   | ELet      : id -> exp -> exp -> exp
@@ -51,6 +51,10 @@ Inductive value : exp -> Prop :=
   | VConst   : forall n, value (EConst n)
   | VSyncLoc : forall id, value (ESyncLoc id)
   | VFunction: forall lids exp, value (EFunction lids exp).
+
+Inductive thread : Type :=
+  | TExpr : exp -> thread
+  | Wrong : thread.
 
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 60).
@@ -69,10 +73,11 @@ Inductive C  : Set :=
   | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
   | C_if     : C -> exp -> exp -> C
   | C_let    : id -> C -> exp -> C
+  | C_seq_1  : C -> exp -> C
+  | C_seq_2  : exp -> C -> C
   | C_inatom : C -> C.
 
 Inductive ae : exp -> Prop :=
-  | ae_while : forall cond e, value cond -> ae (EWhile cond e)
   | ae_if    : forall cond e1 e2, value cond -> ae (EIf cond e1 e2)
   | ae_let   : forall id v e, value v -> ae (ELet id v e)
   | ae_id    : forall id c, ae (EId id c)
@@ -80,8 +85,7 @@ Inductive ae : exp -> Prop :=
   | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
   | ae_atom  : forall e, ae (EAtomic e)
-  | ae_inatom: forall v, value v -> ae (EInAtomic v)
-  | ae_fork  : forall e, ae (EFork e).
+  | ae_inatom: forall v, value v -> ae (EInAtomic v).
 
 Fixpoint extract_exp (l : list (sig value)) :=
 match l with
@@ -94,30 +98,42 @@ end.
 Eval simpl in extract_exp [exist value (EConst 5) (VConst 5), exist value (ESyncLoc (Id 6)) (VSyncLoc (Id 6))].
 
 
-Inductive E  : exp -> C -> exp -> Prop :=
-  | E_hole   : forall e,  E e C_hole e
-  | E_assgn  : forall id c e e' C, 
-               E e C e' -> 
-               E (EAssgn id c e) (C_assgn id c C) e'
-  | E_prim   : forall p e e' (vs : list (sig value)) C es,
-               E e C e' ->
-               E (EPrim p ((extract_exp vs) ++ e::es)) (C_prim p vs C es) e'
-  | E_app_1  : forall f f' C F ids es,
-               E f C f' ->
-               E (EApp f F es) (C_app_1 C ids es) f'
-  | E_app_2  : forall body F ids e e' (vs : list (sig value)) C es,
-               E e C e' ->
-               E (EApp (EFunction ids body) F ((extract_exp vs) ++ e::es)) 
-                 (C_app_2 (exist value (EFunction ids body) (VFunction ids body)) ids vs C es) e'.
+(* The relation that decomposes an expression into a context and  *)
+(* an expression in the hole of the context *)
+Inductive D   : exp -> C -> exp -> Prop :=
+  | DHole     : forall e, D e C_hole e
+  | DAssgn    : forall C rhs' id conflict rhs,
+                D rhs C rhs' -> 
+                D (EAssgn id conflict rhs) (C_assgn id conflict C) rhs'
+  | DSeq1     : forall e1 C v1 e2,
+                D e1 C v1 ->
+                D (ESeq e1 e2) (C_seq_1 C e2) v1
+  | DSeq2     : forall v e C e',
+                value v ->
+                D e C e' ->
+                D (ESeq v e) (C_seq_2 v C) e'
+  | DPrim     : forall p e e' (vs : list (sig value)) C es,
+                D e C e' ->
+                D (EPrim p ((extract_exp vs) ++ e::es)) (C_prim p vs C es) e'
+  | DApp1     : forall f f' C F ids es,
+                D f C f' ->
+                D (EApp f F es) (C_app_1 C ids es) f'
+  | DApp2     : forall body F ids e e' (vs : list (sig value)) C es,
+                D e C e' ->
+                D (EApp (EFunction ids body) F ((extract_exp vs) ++ e::es))
+                  (C_app_2 (exist value (EFunction ids body) (VFunction ids body)) ids vs C es) e'
+  | DIf       : forall cond C cond' e1 e2,
+                D cond C cond' ->
+                D (EIf cond e1 e2) (C_if C e1 e2) cond'
+  | DLet      : forall id e C e' body,
+                D e C e' ->
+                D (ELet id e body) (C_let id C body) e'
+  | DInAtomic : forall e C e',
+                D e C e' ->
+                D (EInAtomic e) (C_inatom C) e'.
+    
 
-Inductive thread : Type :=
-  | TExpr : exp -> thread
-  | Wrong : thread.
-
-
-
-
-Definition i := (Id 5).
+Definition i := (Id 5).gp
 Definition a := (EId i CNone).
 Definition b := IFE a 
                 THEN LET i ::= a IN (i % (CNone) ::= (EConst 6) )
@@ -213,7 +229,9 @@ Inductive step : heap -> sync_state -> list thread -> Prop :=
   | SWrong : forall p (es : list exp) heap sync sync' t t',
              I p es sync = None ->
              step heap sync (t ++ (TExpr (EPrim p es))::t') ->
-             step heap sync' (t ++ (Wrong)::t').
+             step heap sync' (t ++ (Wrong)::t')
+  | SApp : forall args body tag vs heap sync sync' t t',
+             step heap sync (t ++ (TExpr (ECall 
 
 Example Example1 : forall heap sync_state t t', step heap sync_state (t ++ (TExpr ((EConst 1) p+ 2))::t') ->
   step heap sync_state (t ++ (TExpr (EConst 3))::t').
