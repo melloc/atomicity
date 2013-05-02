@@ -133,7 +133,22 @@ Inductive D   : exp -> C -> exp -> Prop :=
                 D (EInAtomic e) (C_inatom C) e'.
     
 
-Definition i := (Id 5).gp
+Fixpoint plug (e : exp) (cxt : C) := 
+match cxt with
+  | C_hole   => e
+  | C_assgn id conflict cxt => EAssgn id conflict (plug e cxt)
+  | C_prim  p vs cxt es     => EPrim p ((extract_exp vs) ++ (plug e cxt)::es)
+  | C_app_1 cxt F es        => EApp (plug e cxt) F es
+  | C_app_2 (exist f p) F vs cxt es   
+                            => EApp f F ((extract_exp vs) ++ (plug e cxt)::es)
+  | C_if    cxt e1 e2       => EIf (plug e cxt) e1 e2
+  | C_let   id cxt body     => ELet id (plug e cxt) body
+  | C_seq_1 cxt e2          => ESeq (plug e cxt) e2
+  | C_seq_2 e1  cxt         => ESeq e1 (plug e cxt)
+  | C_inatom cxt             => EInAtomic (plug e cxt)
+end.
+
+Definition i := (Id 5).
 Definition a := (EId i CNone).
 Definition b := IFE a 
                 THEN LET i ::= a IN (i % (CNone) ::= (EConst 6) )
