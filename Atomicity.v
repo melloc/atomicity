@@ -23,7 +23,6 @@ end.
 Eval simpl in id_eq (Id 5) (Id 6).
 Eval simpl in id_eq (Id 5) (Id 5).
 
-
 Inductive primitive : Type :=
   | Assert  : primitive
   | Plus    : primitive
@@ -40,7 +39,7 @@ Inductive exp : Set :=
   | EAssgn    : id -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
   | EPrim     : primitive -> list exp -> exp
-  | ECall     : exp -> list exp -> list exp -> exp
+  | EApp     : exp -> list id -> list exp -> exp
   | EIf       : exp -> exp -> exp -> exp
   | EWhile    : exp -> exp -> exp
   | ELet      : id -> exp -> exp -> exp
@@ -65,12 +64,12 @@ Notation "'FORK' a" := (EFork a) (at level 60).
 Inductive C  : Set :=
   | C_hole   : C
   | C_assgn  : id -> conflict -> C -> C
-  | C_prim   : list (sig value) -> C -> list exp -> C
+  | C_prim   : primitive -> list (sig value) -> C -> list exp -> C
   | C_app_1  : C -> list id -> list exp -> C
   | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
   | C_if     : C -> exp -> exp -> C
   | C_let    : id -> C -> exp -> C
-  | C_inatom: C -> C.
+  | C_inatom : C -> C.
 
 Inductive ae : exp -> Prop :=
   | ae_while : forall cond e, value cond -> ae (EWhile cond e)
@@ -79,10 +78,37 @@ Inductive ae : exp -> Prop :=
   | ae_id    : forall id c, ae (EId id c)
   | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
   | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
-  | ae_app   : forall f F vs, value f -> Forall value vs -> ae (ECall f F vs)
+  | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
   | ae_atom  : forall e, ae (EAtomic e)
   | ae_inatom: forall v, value v -> ae (EInAtomic v)
   | ae_fork  : forall e, ae (EFork e).
+
+Fixpoint extract_exp (l : list (sig value)) :=
+match l with
+| [] => []
+| hd::tl => match hd with
+            | exist e p => e::(extract_exp tl)
+            end
+end.
+
+Eval simpl in extract_exp [exist value (EConst 5) (VConst 5), exist value (ESyncLoc (Id 6)) (VSyncLoc (Id 6))].
+
+
+Inductive E  : exp -> C -> exp -> Prop :=
+  | E_hole   : forall e,  E e C_hole e
+  | E_assgn  : forall id c e e' C, 
+               E e C e' -> 
+               E (EAssgn id c e) (C_assgn id c C) e'
+  | E_prim   : forall p e e' (vs : list (sig value)) C es,
+               E e C e' ->
+               E (EPrim p ((extract_exp vs) ++ e::es)) (C_prim p vs C es) e'
+  | E_app_1  : forall f f' C F ids es,
+               E f C f' ->
+               E (EApp f F es) (C_app_1 C ids es) f'
+  | E_app_2  : forall body F ids e e' (vs : list (sig value)) C es,
+               E e C e' ->
+               E (EApp (EFunction ids body) F ((extract_exp vs) ++ e::es)) 
+                 (C_app_2 (exist value (EFunction ids body) (VFunction ids body)) ids vs C es) e'.
 
 Inductive thread : Type :=
   | TExpr : exp -> thread
