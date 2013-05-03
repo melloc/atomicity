@@ -34,7 +34,6 @@ Inductive exp : Set :=
   | EConst    : nat -> exp
   | ESyncLoc  : id -> exp
   | EFunction : list id -> exp -> exp
-  | EValue    : exp -> exp
   | EId       : id -> conflict -> exp
   | EAssgn    : id -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
@@ -213,40 +212,69 @@ match p with
 end.
 
 
+Inductive red : exp -> exp -> Prop :=
+  | RIf    : forall (e1 e2 : exp) v,
+             red (IFE v THEN e1 ELSE e2) e1
+  | RIfZ   : forall (e1 e2 : exp),
+             red (IFE (EConst 0) THEN e1 ELSE e2) e2
+  | RSeq   : forall v e2,
+             value v ->
+             red (v ; e2) e2
+  | RAtomic: forall e,
+             red (EAtomic e) (EInAtomic e).
 
-Inductive step : heap -> sync_state -> list thread -> Prop :=
-  | SWhile : forall (e1 e2 : exp) (heap : heap) (sync : sync_state) (t t' : list thread), 
-              step heap sync (t ++ (TExpr (WHILE e1 DO e2))::t') ->
-              step heap sync (t ++ (TExpr (IFE e1 THEN e2; (WHILE e1 DO e2)  ELSE (EConst 0)))::t')
-  | SIf    : forall (e1 e2 : exp) heap sync t t' v,
-             value v -> v <> (EConst 0) -> 
-             step heap sync (t ++ (TExpr (IFE (EValue v) THEN e1 ELSE e2))::t') ->
-             step heap sync (t ++ (TExpr e1)::t')
-  | SIfZ   : forall (e1 e2 : exp) heap sync t t',
-             step heap sync (t ++ (TExpr (IFE (EConst 0) THEN e1 ELSE e2))::t') ->
-             step heap sync (t ++ (TExpr e2)::t')
-  | SLet   : forall x v e (p : value v) heap sync t t',
+
+Inductive progstate : Type :=
+  | ProgState : heap -> sync_state -> list thread -> progstate.
+
+Reserved Notation "'[|' t1 '#' ha ',' sa ',' ea '===>' hb ',' sb ',' eb '#' t2 '|]'" (at level 50, no associativity).
+
+Inductive step : progstate -> progstate -> Prop :=
+  | SRed   : forall heap sync t t' e C ae e',
+             D e C ae ->
+             red ae e' ->
+             [| t # heap, sync, e ===> heap, sync, (plug e' C) # t' |]
+  | SWhile : forall (e1 e2 : exp) (heap : heap) (sync : sync_state) (t t' : list thread),
+             [| t # heap, sync, (WHILE e1 DO e2) ===>
+                    heap, sync, (IFE e1 THEN e2; (WHILE e1 DO e2)  ELSE (EConst 0)) # t' |]
+  | SLet1   : forall x e e' C ae heap sync heap' sync' body t t',
              lookup_heap heap x = None ->
-             step heap sync (t ++ (TExpr (LET x ::= v IN e))::t') ->
-             step (HHeap v p x heap) sync (t ++ (TExpr e)::t')
+             D e C ae ->
+             [| t # heap, sync, ae ===> heap', sync', e' # t' |] ->
+             [| t # heap, sync, (LET x ::= e IN body) ===>
+                    heap', sync', (LET x::= (plug e' C) IN body) # t' |]
+  | SLet2   : forall x v p body heap sync t t',
+             lookup_heap heap x = None ->
+             value v ->
+             [| t # heap, sync, (LET x ::= v IN body) ===> 
+                    (HHeap v p x heap), sync, body # t' |]
   | SLookup: forall x c heap sync t t' v p,
-             step heap sync (t ++ (TExpr (x %% c))::t') ->
-             lookup_heap heap x = Some (exist value v p) -> 
-             step heap sync (t ++ (TExpr v)::t')
+             lookup_heap heap x = Some (exist value v p) ->
+             [| t # heap, sync, x %% c ===> heap, sync, v # t' |]
   | SAssgn : forall x c v p heap sync t t',
              value v ->
-             step heap sync (t ++ (TExpr (x % (c) ::= v))::t') ->
-             step (HHeap v p x heap) sync (t ++ (TExpr (EValue v))::t')
+             [| t # heap, sync, (x % (c) ::= v) ===>
+                    (HHeap v p x heap), sync, v # t' |]
   | SPrim  : forall p (es : list exp) heap sync sync' v' t t' val,
              I p es sync = Some (exist value v' val, sync') ->
-             step heap sync (t ++ (TExpr (EPrim p es))::t') ->
-             step heap sync' (t ++ (TExpr v')::t')
-  | SWrong : forall p (es : list exp) heap sync sync' t t',
+             [| t # heap, sync, EPrim p es ===>
+                    heap, sync', v' # t' |]
+  | SWrong : forall p (es : list exp) heap sync t t',
              I p es sync = None ->
-             step heap sync (t ++ (TExpr (EPrim p es))::t') ->
-             step heap sync' (t ++ (Wrong)::t')
-  | SApp : forall args body tag vs heap sync sync' t t',
-             step heap sync (t ++ (TExpr (ECall 
+             step (ProgState heap sync (t ++ (TExpr (EPrim p es))::t'))
+                  (ProgState heap sync (t ++ Wrong::t'))
+  | SApp1   : forall f C ae e' F es heap heap' sync sync' t t',
+              D f C ae ->
+              [| t # heap, sync, ae ===> heap', sync', e' # t' |] ->
+              [| t # heap, sync, EApp f F es ===>
+                     heap', sync', EApp (plug e' C) F es # t' |]
+  where "'[|' t1 '#' ha ',' sa ',' ea '===>' hb ',' sb ',' eb '#' t2 '|]'" := 
+  (step (ProgState ha sa (t1 ++ (TExpr ea)::t2))
+        (ProgState hb sb (t1 ++ (TExpr eb)::t2))).
+
+  (* | SApp2   : forall ids vs body *)
+  (*             [| t # heap, sync, EApp (EFunction ids body) f F vs ===> *)
+  (*                    heap, sync, body # t' |] *)
 
 Example Example1 : forall heap sync_state t t', step heap sync_state (t ++ (TExpr ((EConst 1) p+ 2))::t') ->
   step heap sync_state (t ++ (TExpr (EConst 3))::t').
