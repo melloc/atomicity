@@ -235,10 +235,10 @@ Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>' hb '//' sb '//
 
 
 Inductive step : progstate -> progstate -> Prop :=
-  | SIf    : forall e C ae e' e1 e2 heap heap' sync sync' t t',
+  | SIf    : forall e C ae e' e1 e2 heap1 heap' sync sync' t t',
              D e C ae ->
-             [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |]  ->
-             [| heap // sync // t, (IFE e THEN e1 ELSE e2), t' ===>
+             [| heap1 // sync // t, ae, t' ===> heap' // sync' // t, e', t' |]  ->
+             [| heap1 // sync // t, (IFE e THEN e1 ELSE e2), t' ===>
                 heap'// sync'// t, (IFE (plug e' C) THEN e1 ELSE e2), t' |]
   | SIfV   : forall (v e1 e2 : exp) heap sync t t',
              value v -> 
@@ -317,15 +317,6 @@ Qed.
 Example Example2 : forall heap sync t t',
   [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>
      heap // sync // t, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), t' |].
-  intros. apply SRed with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_if C_hole (EConst 5) (EConst 6)).
-  auto.
-  intros. Print SRed. apply SRed with (heap:=heap) (sync:=sync) (t:=t) (t':=t') (e:=IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6)).
-  intros heap sync' t t' H. 
-  apply SIf with (e2:=(EConst 6)) (v:=EConst 5).
-  apply VConst.
-  discriminate.
-  admit.
+  intros. apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole).
+  auto. apply SPrim2 with(pv:=VConst 5); auto.
 Qed.
-
-
-
