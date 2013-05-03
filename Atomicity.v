@@ -46,10 +46,14 @@ Inductive exp : Set :=
   | EAtomic   : exp -> exp
   | EInAtomic : exp -> exp.
 
+Hint Constructors exp.
+
 Inductive value : exp -> Prop :=
   | VConst   : forall n, value (EConst n)
   | VSyncLoc : forall id, value (ESyncLoc id)
   | VFunction: forall lids exp, value (EFunction lids exp).
+
+Hint Constructors value.
 
 Inductive thread : Type :=
   | TExpr : exp -> thread
@@ -58,7 +62,7 @@ Inductive thread : Type :=
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 60).
 Notation "a ';' b" := (ESeq a b) (at level 60).
-Notation "a 'p+' b" := (EPrim Plus [a, (EConst b)]) (at level 60).
+Notation "a 'e+' b" := (EPrim Plus [a, b]) (at level 60).
 Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 60).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
@@ -76,6 +80,8 @@ Inductive C  : Set :=
   | C_seq_2  : exp -> C -> C
   | C_inatom : C -> C.
 
+Hint Constructors C.
+
 Inductive ae : exp -> Prop :=
   | ae_if    : forall cond e1 e2, value cond -> ae (EIf cond e1 e2)
   | ae_let   : forall id v e, value v -> ae (ELet id v e)
@@ -85,6 +91,8 @@ Inductive ae : exp -> Prop :=
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
   | ae_atom  : forall e, ae (EAtomic e)
   | ae_inatom: forall v, value v -> ae (EInAtomic v).
+
+Hint Constructors ae.
 
 Fixpoint extract_exp (l : list (sig value)) :=
 match l with
@@ -130,6 +138,8 @@ Inductive D   : exp -> C -> exp -> Prop :=
   | DInAtomic : forall e C e',
                 D e C e' ->
                 D (EInAtomic e) (C_inatom C) e'.
+
+Hint Constructors D.
     
 
 Fixpoint plug (e : exp) (cxt : C) := 
@@ -152,7 +162,7 @@ Definition a := (EId i CNone).
 Definition b := IFE a 
                 THEN LET i ::= a IN (i % (CNone) ::= (EConst 6) )
                 ELSE WHILE a DO a.
-Definition p := (EConst 5) p+ 6.
+Definition p := (EConst 5) e+ (EConst 6).
 Print b.
 
 Inductive heap : Type :=
@@ -212,16 +222,10 @@ match p with
 end.
 
 
-Inductive red : exp -> exp -> Prop :=
-  | RIf    : forall (e1 e2 : exp) v,
-             red (IFE v THEN e1 ELSE e2) e1
-  | RIfZ   : forall (e1 e2 : exp),
-             red (IFE (EConst 0) THEN e1 ELSE e2) e2
-  | RSeq   : forall v e2,
-             value v ->
-             red (v ; e2) e2
-  | RAtomic: forall e,
-             red (EAtomic e) (EInAtomic e).
+(* Inductive red : exp -> exp -> Prop := *)
+
+
+(* Hint Constructors red. *)
 
 
 Inductive progstate : Type :=
@@ -231,20 +235,28 @@ Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>' hb '//' sb '//
 
 
 Inductive step : progstate -> progstate -> Prop :=
-  | SRed   : forall heap sync t t' e C ae e',
+  | SIf    : forall e C ae e' e1 e2 heap heap' sync sync' t t',
              D e C ae ->
-             red ae e' ->
-             [| heap // sync // t, e, t' ===> heap // sync // t, (plug e' C), t' |]
+             [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |]  ->
+             [| heap // sync // t, (IFE e THEN e1 ELSE e2), t' ===>
+                heap'// sync'// t, (IFE (plug e' C) THEN e1 ELSE e2), t' |]
+  | SIfV   : forall (v e1 e2 : exp) heap sync t t',
+             value v -> 
+             [| heap // sync // t, (IFE v THEN e1 ELSE e2), t' ===>
+                heap // sync // t, e1, t' |]
+  | SIfZ   : forall e1 e2 heap sync t t',
+             [| heap // sync // t, IFE (EConst 0) THEN e1 ELSE e2, t' ===>
+                heap // sync // t, e2, t' |] 
   | SWhile : forall (e1 e2 : exp) (heap : heap) (sync : sync_state) (t t' : list thread),
              [| heap // sync // t, (WHILE e1 DO e2), t' ===>
                 heap // sync // t, (IFE e1 THEN e2; (WHILE e1 DO e2)  ELSE (EConst 0)), t' |]
-  | SLet1   : forall x e e' C ae heap sync heap' sync' body t t',
+  | SLet1  : forall x e e' C ae heap sync heap' sync' body t t',
              lookup_heap heap x = None ->
              D e C ae ->
              [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
              [| heap // sync // t, (LET x ::= e IN body), t' ===>
                 heap'// sync'// t, (LET x::= (plug e' C) IN body), t' |]
-  | SLet2   : forall x v p body heap sync t t',
+  | SLet2  : forall x v p body heap sync t t',
              lookup_heap heap x = None ->
              value v ->
              [| heap // sync // t, (LET x ::= v IN body), t' ===> 
@@ -261,14 +273,22 @@ Inductive step : progstate -> progstate -> Prop :=
              value v ->
              [| heap // sync // t, x % (c) ::= v, t' ===>
                 (HHeap v p x heap) // sync // t, v, t' |]
-  | SPrim  : forall p (es : list exp) heap sync sync' v' t t' val,
-             I p es sync = Some (exist value v' val, sync') ->
-             [| heap // sync // t, EPrim p es, t' ===>
-                heap // sync'// t, v', t' |]
-  | SWrong : forall p (es : list exp) heap sync t t',
-             I p es sync = None ->
-             step (ProgState heap sync (t ++ (TExpr (EPrim p es))::t'))
-                  (ProgState heap sync (t ++ Wrong::t'))
+  | SPrim1  : forall p esa e C ae e' esb heap heap' sync sync' t t',
+              Forall value esa ->
+              D e C ae ->
+              [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
+              [| heap // sync // t, EPrim p (esa ++ e::esb), t' ===> 
+                 heap'// sync'// t, EPrim p (esa ++ (plug e' C)::esb), t' |]
+  | SPrim2  : forall p (es : list exp) heap sync sync' v' pv t t',
+              Forall value es ->
+              I p es sync = Some (exist value v' pv, sync') ->
+              [| heap // sync // t, EPrim p es, t' ===>
+                 heap // sync'// t, v', t' |]
+  | SWrong  : forall p (es : list exp) heap sync t t',
+              Forall value es ->
+              I p es sync = None ->
+              step (ProgState heap sync (t ++ (TExpr (EPrim p es))::t'))
+                   (ProgState heap sync (t ++ Wrong::t'))
   | SApp1   : forall f C ae e' F es heap heap' sync sync' t t',
               D f C ae ->
               [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
@@ -286,20 +306,20 @@ Inductive step : progstate -> progstate -> Prop :=
   (step (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
         (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))).
 
+Hint Constructors step.
 
-
-Example Example1 : forall heap sync_state t t', step heap sync_state (t ++ (TExpr ((EConst 1) p+ 2))::t') ->
-  step heap sync_state (t ++ (TExpr (EConst 3))::t').
-  intros heap sync' t t' H. 
-  apply SPrim with (p:=Plus) (es:=[EConst 1, EConst 2]) (val:=VConst 3) (sync:=sync'). 
-  reflexivity.
-  assumption.
+Example Example1 : forall heap sync_state t t', [| heap // sync_state // t, (EConst 1) e+ (EConst 2), t' ===>
+  heap // sync_state // t, EConst 3, t' |].
+  intros.
+  apply SPrim2 with (pv:=VConst 3); auto.
 Qed.
 
-Check (EConst 1) p+ 2 p+ 3.
-
-Example Example2 : forall heap sync_state t t', step heap sync_state (t ++ (TExpr (IFE (EConst 2) p+ 3 THEN (EConst 5) ELSE (EConst 6)))::t') ->
-  step heap sync_state (t ++ (TExpr (EConst 5))::t').
+Example Example2 : forall heap sync t t',
+  [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>
+     heap // sync // t, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), t' |].
+  intros. apply SRed with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_if C_hole (EConst 5) (EConst 6)).
+  auto.
+  intros. Print SRed. apply SRed with (heap:=heap) (sync:=sync) (t:=t) (t':=t') (e:=IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6)).
   intros heap sync' t t' H. 
   apply SIf with (e2:=(EConst 6)) (v:=EConst 5).
   apply VConst.
