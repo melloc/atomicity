@@ -8,6 +8,7 @@
  Require Import Omega.
  Require Import SfLib.
  Require Import ListExt.
+ Require Import Rel.
 
 Inductive conflict : Type :=
   | CNone : conflict
@@ -326,6 +327,15 @@ Inductive step : progstate -> progstate -> Prop :=
 
 Hint Constructors step.
 
+Hint Constructors refl_step_closure.
+
+Definition many_steps := refl_step_closure step.
+
+Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>*' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" := 
+(many_steps (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
+            (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))) (at level 50, no associativity).
+
+
 Example Example1 : forall heap sync_state t t', [| heap // sync_state // t, (EConst 1) e+ (EConst 2), t' ===>
   heap // sync_state // t, EConst 3, t' |].
   intros.
@@ -337,4 +347,16 @@ Example Example2 : forall heap sync t t',
      heap // sync // t, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), t' |].
   intros. apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole).
   auto. apply SPrim2 with (pv:=VConst 5); auto.
+Qed.
+
+
+
+Example Example3 : forall heap sync t t',
+  [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>*
+     heap // sync // t, EConst 5, t' |].
+Proof with simpl; auto.
+  intros. eapply rsc_step.  
+  apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole)...
+  apply SPrim2 with (pv:=VConst 5)... eapply rsc_step. 
+  apply SIfV... auto.
 Qed.
