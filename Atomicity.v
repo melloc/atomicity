@@ -355,8 +355,9 @@ Example Example3 : forall heap sync t t',
   [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>*
      heap // sync // t, EConst 5, t' |].
 Proof with simpl; auto.
-  intros. eapply rsc_step.  
-  apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole)...
-  apply SPrim2 with (pv:=VConst 5)... eapply rsc_step. 
-  apply SIfV... auto.
+  intros. 
+  eapply rsc_step. 
+  eapply SIf... 
+  eapply SPrim2...
+  eapply rsc_step...
 Qed.
