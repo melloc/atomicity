@@ -302,6 +302,24 @@ Inductive step : progstate -> progstate -> Prop :=
   | SApp3   : forall ids vs v p F es body t t' heap sync,
               [| heap // sync // t, EApp (EFunction ids body) F ((extract_exp vs) ++ v::es), t' ===>
                  heap // sync // t, EApp (EFunction ids body) F ((extract_exp (vs ++ [exist value v p])) ++ es), t' |]
+  | SSeq1   : forall e C ae e' e2 t t' heap heap' sync sync',
+              D e C ae ->
+              [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
+              [| heap // sync // t, e; e2, t'  ===> heap' // sync' // t, (plug e' C); e2, t' |]
+  | SSeq2   : forall v e2 t t' heap sync,
+              value v ->
+              [| heap // sync // t, v; e2, t'  ===> heap // sync // t, e2, t' |]
+  | SAtomic : forall e t t' heap sync,
+              [| heap // sync // t, EAtomic e, t'  ===> heap // sync // t, EInAtomic e, t' |]
+  | SInAtom1: forall e C ae e' heap heap' sync sync' t t',
+              D e C ae ->
+              [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
+              [| heap // sync // t, EInAtomic e, t' ===> heap' // sync' // t, EInAtomic (plug e' C), t' |]
+  | SInAtom2: forall v heap sync t t',
+              value v ->
+              [| heap // sync // t, EInAtomic v, t' ===> heap // sync // t, v, t' |]
+  | SFork   : forall e heap sync t t',
+              [| heap // sync // t, EFork e, t' ===> heap // sync // t, EConst 0, t' ++ [TExpr e] |]
   where "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" := 
   (step (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
         (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))).
@@ -318,5 +336,5 @@ Example Example2 : forall heap sync t t',
   [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>
      heap // sync // t, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), t' |].
   intros. apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole).
-  auto. apply SPrim2 with(pv:=VConst 5); auto.
+  auto. apply SPrim2 with (pv:=VConst 5); auto.
 Qed.
