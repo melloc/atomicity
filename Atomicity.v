@@ -27,6 +27,7 @@ Eval simpl in id_eq (Id 5) (Id 5).
 Inductive primitive : Type :=
   | Assert  : primitive
   | Plus    : primitive
+  | Minus   : primitive
   | NewLock : primitive
   | Acquire : primitive
   | Release : primitive.
@@ -61,10 +62,11 @@ Inductive thread : Type :=
   | Wrong : thread.
 
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
-Notation "x '%%' b" := (EId x b) (at level 60).
-Notation "a ';' b" := (ESeq a b) (at level 60).
-Notation "a 'e+' b" := (EPrim Plus [a, b]) (at level 60).
-Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 60).
+Notation "x '%%' b" := (EId x b) (at level 70).
+Notation "a ';' b" := (ESeq a b) (at level 80).
+Notation "a 'e+' b" := (EPrim Plus [a, b]) (at level 70).
+Notation "a 'e-' b" := (EPrim Minus [a, b]) (at level 70).
+Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 80).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
 Notation "'FORK' a" := (EFork a) (at level 60).
@@ -217,6 +219,11 @@ match p with
                       Some (exist value (EConst (a + b)) (VConst (a+b)), sync_heap)
                  | _ => None
                end
+  | Minus   => match vs with
+                 |  (EConst a)::(EConst b)::[] => 
+                      Some (exist value (EConst (a - b)) (VConst (a-b)), sync_heap)
+                 | _ => None
+               end
   | NewLock => None
   | Acquire => None
   | Release => None
@@ -360,4 +367,36 @@ Proof with simpl; auto.
   eapply SIf... 
   eapply SPrim2...
   eapply rsc_step...
+Qed.
+
+Definition X := Id 0.
+
+Example Example4 : forall heap sync t t',
+  [| (HHeap (EConst 1) (VConst 1) X heap) // sync // t, 
+     WHILE (X %% (CNone)) DO (X % (CNone) ::= ((X %% (CNone)) e- (EConst 1))), t' ===>*
+     (HHeap (EConst 0) (VConst 0) X (HHeap (EConst 1) (VConst 1) X heap)) // sync // t, EConst 0, t' |].
+Proof with simpl; auto.
+  intros.
+  eapply rsc_step...
+  eapply rsc_step.
+    eapply SIf...
+    eapply SLookup...
+  eapply rsc_step...
+  eapply rsc_step.
+    eapply SSeq1...
+    eapply SAssgn1...
+    apply SPrim1 with (esa:=[]) (ae:=X %% CNone)...
+    eapply SLookup...
+  eapply rsc_step.
+    eapply SSeq1... 
+    eapply SAssgn1...
+    eapply SPrim2...
+  eapply rsc_step.
+    eapply SSeq1...
+  eapply rsc_step...
+  eapply rsc_step...
+  eapply rsc_step.
+    eapply SIf...
+    eapply SLookup...
+  eauto.
 Qed.
