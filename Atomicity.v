@@ -39,7 +39,7 @@ Inductive exp : Set :=
   | EId       : id -> conflict -> exp
   | EAssgn    : id -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
-  | EPrim     : primitive -> list exp -> exp
+  | EPrim     : primitive -> list exp -> list exp -> exp
   | EApp      : exp -> list id -> list exp -> exp
   | EIf       : exp -> exp -> exp -> exp
   | EWhile    : exp -> exp -> exp
@@ -64,8 +64,8 @@ Inductive thread : Type :=
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 70).
 Notation "a ';' b" := (ESeq a b) (at level 80).
-Notation "a 'e+' b" := (EPrim Plus [a, b]) (at level 70).
-Notation "a 'e-' b" := (EPrim Minus [a, b]) (at level 70).
+Notation "a 'e+' b" := (EPrim Plus [] [a, b]) (at level 70).
+Notation "a 'e-' b" := (EPrim Minus [] [a, b]) (at level 70).
 Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 80).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
@@ -74,13 +74,12 @@ Notation "'FORK' a" := (EFork a) (at level 60).
 Inductive C  : Set :=
   | C_hole   : C
   | C_assgn  : id -> conflict -> C -> C
-  | C_prim   : primitive -> list (sig value) -> C -> list exp -> C
+  | C_prim   : primitive -> list exp -> C -> list exp -> C
   | C_app_1  : C -> list id -> list exp -> C
   | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
   | C_if     : C -> exp -> exp -> C
   | C_let    : id -> C -> exp -> C
-  | C_seq_1  : C -> exp -> C
-  | C_seq_2  : exp -> C -> C
+  | C_seq  : C -> exp -> C
   | C_inatom : C -> C.
 
 Hint Constructors C.
@@ -90,10 +89,11 @@ Inductive ae : exp -> Prop :=
   | ae_let   : forall id v e, value v -> ae (ELet id v e)
   | ae_id    : forall id c, ae (EId id c)
   | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
-  | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
+  | ae_prim  : forall prim vs, ae (EPrim prim vs [])
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
   | ae_atom  : forall e, ae (EAtomic e)
-  | ae_inatom: forall v, value v -> ae (EInAtomic v).
+  | ae_inatom: forall v, value v -> ae (EInAtomic v)
+  | ae_seq   : forall v e, value v -> ae (ESeq v e).
 
 Hint Constructors ae.
 
@@ -115,16 +115,13 @@ Inductive D   : exp -> C -> exp -> Prop :=
   | DAssgn    : forall C rhs' id conflict rhs,
                 D rhs C rhs' -> 
                 D (EAssgn id conflict rhs) (C_assgn id conflict C) rhs'
-  | DSeq1     : forall e1 C v1 e2,
-                D e1 C v1 ->
-                D (ESeq e1 e2) (C_seq_1 C e2) v1
-  | DSeq2     : forall v e C e',
-                value v ->
+  | DSeq     : forall e1 C e1' e2,
+                D e1 C e1' ->
+                D (ESeq e1 e2) (C_seq C e2) e1'
+  | DPrim     : forall p e e' vs C es,
                 D e C e' ->
-                D (ESeq v e) (C_seq_2 v C) e'
-  | DPrim     : forall p e e' (vs : list (sig value)) C es,
-                D e C e' ->
-                D (EPrim p ((extract_exp vs) ++ e::es)) (C_prim p vs C es) e'
+                Forall value vs ->
+                D (EPrim p vs (e::es)) (C_prim p vs C es) e'
   | DApp1     : forall f f' C F ids es,
                 D f C f' ->
                 D (EApp f F es) (C_app_1 C ids es) f'
@@ -149,15 +146,14 @@ Fixpoint plug (e : exp) (cxt : C) :=
 match cxt with
   | C_hole   => e
   | C_assgn id conflict cxt => EAssgn id conflict (plug e cxt)
-  | C_prim  p vs cxt es     => EPrim p ((extract_exp vs) ++ (plug e cxt)::es)
+  | C_prim  p vs cxt es     => EPrim p vs ((plug e cxt)::es)
   | C_app_1 cxt F es        => EApp (plug e cxt) F es
   | C_app_2 (exist f p) F vs cxt es   
                             => EApp f F ((extract_exp vs) ++ (plug e cxt)::es)
   | C_if    cxt e1 e2       => EIf (plug e cxt) e1 e2
   | C_let   id cxt body     => ELet id (plug e cxt) body
-  | C_seq_1 cxt e2          => ESeq (plug e cxt) e2
-  | C_seq_2 e1  cxt         => ESeq e1 (plug e cxt)
-  | C_inatom cxt             => EInAtomic (plug e cxt)
+  | C_seq   cxt e2          => ESeq (plug e cxt) e2
+  | C_inatom cxt            => EInAtomic (plug e cxt)
 end.
 
 Definition i := (Id 5).
@@ -229,12 +225,12 @@ match p with
   | Release => None
 end.
 
-
-(* Inductive red : exp -> exp -> Prop := *)
-
-
-(* Hint Constructors red. *)
-
+Fixpoint noinatom (ts : list thread) : Prop :=
+match ts with
+  | []                      => True
+  | TExpr (EInAtomic e)::tl => False
+  | _::tl                   => noinatom tl
+end.
 
 Inductive progstate : Type :=
   | ProgState : heap -> sync_state -> list thread -> progstate.
@@ -281,21 +277,26 @@ Inductive step : progstate -> progstate -> Prop :=
              value v ->
              [| heap // sync // t, x % (c) ::= v, t' ===>
                 (HHeap v p x heap) // sync // t, v, t' |]
-  | SPrim1  : forall p esa e C ae e' esb heap heap' sync sync' t t',
-              Forall value esa ->
+  | SPrim1  : forall p vs e C ae e' es heap heap' sync sync' t t',
+              Forall value vs ->
               D e C ae ->
               [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
-              [| heap // sync // t, EPrim p (esa ++ e::esb), t' ===> 
-                 heap'// sync'// t, EPrim p (esa ++ (plug e' C)::esb), t' |]
-  | SPrim2  : forall p (es : list exp) heap sync sync' v' pv t t',
-              Forall value es ->
-              I p es sync = Some (exist value v' pv, sync') ->
-              [| heap // sync // t, EPrim p es, t' ===>
+              [| heap // sync // t, EPrim p vs (e::es), t' ===> 
+                 heap'// sync'// t, EPrim p vs ((plug e' C)::es), t' |]
+  | SPrim2  : forall p vs heap sync sync' v' pv t t',
+              Forall value vs ->
+              I p vs sync = Some (exist value v' pv, sync') ->
+              [| heap // sync // t, EPrim p vs [], t' ===>
                  heap // sync'// t, v', t' |]
-  | SWrong  : forall p (es : list exp) heap sync t t',
-              Forall value es ->
-              I p es sync = None ->
-              step (ProgState heap sync (t ++ (TExpr (EPrim p es))::t'))
+  | SPrim3  : forall p vs e es heap sync t t',
+              Forall value vs ->
+              value e ->
+              [| heap // sync // t, EPrim p vs (e::es), t' ===> 
+                 heap // sync // t, EPrim p (vs ++ [e]) es, t' |]
+  | SWrong  : forall p vs heap sync t t',
+              Forall value vs ->
+              I p vs sync = None ->
+              step (ProgState heap sync (t ++ (TExpr (EPrim p vs []))::t'))
                    (ProgState heap sync (t ++ Wrong::t'))
   | SApp1   : forall f C ae e' F es heap heap' sync sync' t t',
               D f C ae ->
@@ -334,26 +335,52 @@ Inductive step : progstate -> progstate -> Prop :=
 
 Hint Constructors step.
 
+Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" (at level 50, no associativity).
+
+Inductive coarsestep : progstate -> progstate -> Prop :=
+  | CoarseStep : forall heap sync heap' sync' ta1 ta2 tb1 tb2 e e',
+                 noinatom ta1 -> noinatom ta2 ->
+                 noinatom tb1 -> noinatom tb2 ->
+                 [| heap // sync // ta1, e, ta2 ===> heap' // sync' // tb1, e', tb2 |] ->
+                 [| heap // sync // ta1, e, ta2 ===>> heap' // sync' // tb1, e', tb2 |]
+  where "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" :=
+  (coarsestep (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
+        (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))).
+
 Hint Constructors refl_step_closure.
 
 Definition many_steps := refl_step_closure step.
+
+
 
 Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>*' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" := 
 (many_steps (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
             (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))) (at level 50, no associativity).
 
 
-Example Example1 : forall heap sync_state t t', [| heap // sync_state // t, (EConst 1) e+ (EConst 2), t' ===>
+Example Example1 : forall heap sync_state t t', [| heap // sync_state // t, (EConst 1) e+ (EConst 2), t' ===>*
   heap // sync_state // t, EConst 3, t' |].
-  intros.
-  apply SPrim2 with (pv:=VConst 3); auto.
+Proof with simpl; auto.
+  intros. 
+  eapply rsc_step...
+  eapply rsc_step...
+  eapply rsc_step...
+  eapply SPrim2...
 Qed.
 
 Example Example2 : forall heap sync t t',
-  [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>
+  [| heap // sync // t, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), t' ===>*
      heap // sync // t, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), t' |].
-  intros. apply SIf with (ae:=(EConst 2) e+ (EConst 3)) (C:=C_hole).
-  auto. apply SPrim2 with (pv:=VConst 5); auto.
+Proof with simpl; auto.
+  intros. 
+  eapply rsc_step.
+   eapply SIf...
+  eapply rsc_step.
+    eapply SIf...
+  eapply rsc_step.
+    eapply SIf...
+    eapply SPrim2...
+  eapply rsc_refl.
 Qed.
 
 
@@ -363,8 +390,12 @@ Example Example3 : forall heap sync t t',
      heap // sync // t, EConst 5, t' |].
 Proof with simpl; auto.
   intros. 
-  eapply rsc_step. 
-  eapply SIf... 
+  eapply rsc_step.
+  eapply SIf...
+  eapply rsc_step.
+    eapply SIf...
+  eapply rsc_step.
+    eapply SIf...
   eapply SPrim2...
   eapply rsc_step...
 Qed.
@@ -385,18 +416,68 @@ Proof with simpl; auto.
   eapply rsc_step.
     eapply SSeq1...
     eapply SAssgn1...
-    apply SPrim1 with (esa:=[]) (ae:=X %% CNone)...
+    eapply SPrim1...
     eapply SLookup...
   eapply rsc_step.
     eapply SSeq1... 
+    eapply SAssgn1...
+    (* eapply SPrim2... *)
+  eapply rsc_step.
+    eapply SSeq1...
+    eapply SAssgn1...
+  eapply rsc_step.
+    eapply SSeq1...
     eapply SAssgn1...
     eapply SPrim2...
   eapply rsc_step.
     eapply SSeq1...
   eapply rsc_step...
-  eapply rsc_step...
+  eapply rsc_step.
+  eapply SWhile...
   eapply rsc_step.
     eapply SIf...
     eapply SLookup...
   eauto.
 Qed.
+
+Lemma decomp : forall e, value e \/ (exists C, exists e', D e C e' /\ ae e').
+Proof with simpl; auto.
+  intros. 
+  induction e.
+  (* Case EConst *)
+  left...
+  (* Case ESyncLoc *)
+  left...
+  (* Case EFunction *)
+  left...
+  (* Case id %% c *)
+  right... eauto.
+  (* Case id % c ::= e *)
+  right... destruct IHe; eauto. 
+  destruct H. destruct H. destruct H. eauto.
+  (* Case e1; e2 *)
+  right... 
+  destruct IHe1.
+    (* Case value e1 *) 
+    destruct IHe2. 
+      (* Case value e2 *)
+      eauto. 
+      (* Case e2 contains an ae *)
+      destruct H0. destruct H0. destruct H0. eauto.
+    (* Case e1 contains an ae *)
+    destruct H. destruct H. destruct H. eauto. 
+  (* Case EPrim *)
+  right... induction l0.
+    exists C_hole. exists (EPrim p0 l []). auto.
+    
+
+(* Things we would like to show here:
+   1) The expression produced by decomposition is always an active expression.
+   2)
+*)
+Lemma adecompose_ae : forall e C e', decomp e -> ae e'.
+Proof with simpl; auto.
+  intros.
+  induction H; auto.
+  destruct C0.
+  destruct e'... 
