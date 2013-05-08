@@ -91,6 +91,7 @@ Inductive ae : exp -> Prop :=
   | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
   | ae_prim  : forall prim vs, ae (EPrim prim vs [])
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
+  | ae_fork  : forall e, ae (EFork e)
   | ae_atom  : forall e, ae (EAtomic e)
   | ae_inatom: forall v, value v -> ae (EInAtomic v)
   | ae_seq   : forall v e, value v -> ae (ESeq v e).
@@ -440,6 +441,11 @@ Proof with simpl; auto.
   eauto.
 Qed.
 
+
+(* Things we would like to show here:
+   1) The expression produced by decomposition is always an active expression.
+   2)
+*)
 Lemma decomp : forall e, value e \/ (exists C, exists e', D e C e' /\ ae e').
 Proof with simpl; auto.
   intros. 
@@ -467,17 +473,33 @@ Proof with simpl; auto.
     (* Case e1 contains an ae *)
     destruct H. destruct H. destruct H. eauto. 
   (* Case EPrim *)
-  right... induction l0.
-    exists C_hole. exists (EPrim p0 l []). auto.
-    
-
-(* Things we would like to show here:
-   1) The expression produced by decomposition is always an active expression.
-   2)
-*)
-Lemma adecompose_ae : forall e C e', decomp e -> ae e'.
-Proof with simpl; auto.
-  intros.
-  induction H; auto.
-  destruct C0.
-  destruct e'... 
+  right...(*  induction l0. *)
+    (* exists C_hole. exists (EPrim p0 l []). auto.  *)
+  admit.
+  (* Case EApp *)
+  admit. (* We might not do functions *)
+  (* Case EIf *)
+  right. destruct IHe1. 
+    (* The condition is a value *)
+    eauto.
+    (* The condition contains an ae *)
+    inversion H.  inversion H0. inversion H1. eauto.
+  (* Case EWhile *)
+  admit. (* While desugars, so there's no real active expression here *)
+  (* Case ELet *)
+  right. destruct IHe1. 
+    (* The expression is a value *)
+    eauto.
+    (* The expression contains an ae *)
+    inversion H. inversion H0. inversion H1. eauto.
+  (* Case EFork *)
+  right. eauto.
+  (* Case EAtomic *)
+  right. eauto.
+  (* Case EInAtomic *)
+  right. inversion IHe. 
+    (* expression is a value *)
+    eauto.
+    (* expression contains an ae *)
+    inversion H. inversion H0. inversion H1. eauto.
+Qed.
