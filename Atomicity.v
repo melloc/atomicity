@@ -98,15 +98,14 @@ Inductive ae : exp -> Prop :=
 
 Hint Constructors ae.
 
-Fixpoint extract_exp (l : list (sig value)) :=
-match l with
-| [] => []
-| hd::tl => match hd with
-            | exist e p => e::(extract_exp tl)
-            end
+Fixpoint extract_exp (v : (sig value)) : exp :=
+match v with
+  | exist e p => e
 end.
 
-Eval simpl in extract_exp [exist value (EConst 5) (VConst 5), exist value (ESyncLoc (Id 6)) (VSyncLoc (Id 6))].
+Fixpoint extract_exps (l : list (sig value)) := map extract_exp l.
+
+Eval simpl in extract_exps [exist value (EConst 5) (VConst 5), exist value (ESyncLoc (Id 6)) (VSyncLoc (Id 6))].
 
 
 (* The relation that decomposes an expression into a context and  *)
@@ -130,7 +129,7 @@ Inductive D   : exp -> C -> exp -> Prop :=
                 D (EApp f F es) (C_app_1 C ids es) f'
   | DApp2     : forall body F ids e e' (vs : list (sig value)) C es,
                 D e C e' ->
-                D (EApp (EFunction ids body) F ((extract_exp vs) ++ e::es))
+                D (EApp (EFunction ids body) F ((extract_exps vs) ++ e::es))
                   (C_app_2 (exist value (EFunction ids body) (VFunction ids body)) ids vs C es) e'
   | DIf       : forall cond C cond' e1 e2,
                 D cond C cond' ->
@@ -152,7 +151,7 @@ match cxt with
   | C_prim  p vs cxt es     => EPrim p (vs ++ ((plug e cxt)::es))
   | C_app_1 cxt F es        => EApp (plug e cxt) F es
   | C_app_2 (exist f p) F vs cxt es   
-                            => EApp f F ((extract_exp vs) ++ (plug e cxt)::es)
+                            => EApp f F ((extract_exps vs) ++ (plug e cxt)::es)
   | C_if    cxt e1 e2       => EIf (plug e cxt) e1 e2
   | C_let   id cxt body     => ELet id (plug e cxt) body
   | C_seq   cxt e2          => ESeq (plug e cxt) e2
@@ -336,11 +335,11 @@ Inductive step : progstate -> progstate -> Prop :=
   | SApp2   : forall ids vs e C ae e' F es body t t' heap sync heap' sync',
               D e C ae ->
               [| heap // sync // t, e, t' ===> heap' // sync' // t, e', t' |] ->
-              [| heap // sync // t, EApp (EFunction ids body) F ((extract_exp vs) ++ e::es), t' ===>
-                 heap' // sync' // t, EApp (EFunction ids body) F ((extract_exp vs) ++ e'::es), t' |]
+              [| heap // sync // t, EApp (EFunction ids body) F ((extract_exps vs) ++ e::es), t' ===>
+                 heap' // sync' // t, EApp (EFunction ids body) F ((extract_exps vs) ++ e'::es), t' |]
   | SApp3   : forall ids vs v p F es body t t' heap sync,
-              [| heap // sync // t, EApp (EFunction ids body) F ((extract_exp vs) ++ v::es), t' ===>
-                 heap // sync // t, EApp (EFunction ids body) F ((extract_exp (vs ++ [exist value v p])) ++ es), t' |]
+              [| heap // sync // t, EApp (EFunction ids body) F ((extract_exps vs) ++ v::es), t' ===>
+                 heap // sync // t, EApp (EFunction ids body) F ((extract_exps (vs ++ [exist value v p])) ++ es), t' |]
   | SSeq1   : forall e C ae e' e2 t t' heap heap' sync sync',
               D e C ae ->
               [| heap // sync // t, ae, t' ===> heap' // sync' // t, e', t' |] ->
@@ -618,3 +617,29 @@ Inductive has_type : exp -> atom -> Prop :=
   t <> TTop ->
   has_type (EInAtomic e) t
 (* We omit wrong, because we have no EWrong *).
+
+
+
+
+
+Theorem progress : 
+  forall e T h h' s s' ta ta' tb tb', 
+    has_type e T ->
+    value e \/ exists e', 
+      [| h // s // ta, e, tb ===> 
+         h' // s' // ta', e', tb' |].
+Proof with simpl; auto.
+  intros. induction e.
+  Case "EConst". left...
+  Case "ESyncLoc". left...
+  Case "EFunction". left...
+  Case "EId". right.
+ (* generalize dependent h'. *)
+ (* generalize dependent s'. *)
+ (* generalize dependent ta'. *)
+ (* generalize dependent tb'. *)
+  (* exists (extract_exp (lookup_heap h i0)). *)
+Admitted.
+Qed.
+ 
+  
