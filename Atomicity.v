@@ -121,7 +121,6 @@ Inductive D   : exp -> C -> exp -> Prop :=
                 D (ESeq e1 e2) (C_seq C e2) e1'
   | DPrim     : forall p e e' vs C es,
                 D e C e' ->
-                Forall value vs ->
                 D (EPrim p vs (e::es)) (C_prim p vs C es) e'
   | DApp1     : forall f f' C F ids es,
                 D f C f' ->
@@ -473,9 +472,9 @@ Proof with simpl; auto.
     (* Case e1 contains an ae *)
     destruct H. destruct H. destruct H. eauto. 
   (* Case EPrim *)
-  right...(*  induction l0. *)
-    (* exists C_hole. exists (EPrim p0 l []). auto.  *)
-  admit.
+  right... destruct l0.
+    eauto.
+    admit.
   (* Case EApp *)
   admit. (* We might not do functions *)
   (* Case EIf *)
