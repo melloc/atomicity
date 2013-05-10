@@ -44,7 +44,6 @@ Inductive exp : Set :=
   | EIf       : exp -> exp -> exp -> exp
   | EWhile    : exp -> exp -> exp
   | ELet      : id -> exp -> exp -> exp
-  | EFork     : exp -> exp
   | EAtomic   : exp -> exp
   | EInAtomic : exp -> exp.
 
@@ -69,7 +68,6 @@ Notation "a 'e-' b" := (EPrim Minus [a, b]) (at level 70).
 Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 80).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
-Notation "'FORK' a" := (EFork a) (at level 60).
 
 Inductive C  : Set :=
   | C_hole   : C
@@ -91,7 +89,6 @@ Inductive ae : exp -> Prop :=
   | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
   | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
-  | ae_fork  : forall e, ae (EFork e)
   | ae_atom  : forall e, ae (EAtomic e)
   | ae_inatom: forall v, value v -> ae (EInAtomic v)
   | ae_seq   : forall v e, value v -> ae (ESeq v e).
@@ -252,7 +249,6 @@ Fixpoint contains_inatom e : bool :=
     | ELet _ lhs rhs =>
       contains_inatom lhs ||
       contains_inatom rhs
-    | EFork e => contains_inatom e
     | EAtomic e => contains_inatom e
     | EInAtomic e => true
 end.
@@ -266,104 +262,122 @@ Fixpoint contains_inatom_threads (ts : list thread) : bool :=
                 end) ts)
   false.
 
+
+
+Inductive threadstate : Type :=
+  | ThreadState : heap -> sync_state -> thread -> threadstate.
+
+
+Reserved Notation "'[|' ha '//' sa '//' ea '===>' hb '//' sb '//' eb '|]'" (at level 50, no associativity).
+
+Inductive tstep : threadstate -> threadstate -> Prop :=
+  | SIf    : forall e C ae e' e1 e2 heap heap' sync sync',
+             D e C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |]  ->
+             [| heap // sync // (IFE e THEN e1 ELSE e2) ===>
+                heap'// sync'// (IFE (plug e' C) THEN e1 ELSE e2) |]
+  | SIfV   : forall (v e1 e2 : exp) heap sync,
+             value v -> 
+             v <> EConst 0 ->
+             [| heap // sync // (IFE v THEN e1 ELSE e2) ===>
+                heap // sync // e1 |]
+  | SIfZ   : forall e1 e2 heap sync,
+             [| heap // sync // IFE (EConst 0) THEN e1 ELSE e2 ===>
+                heap // sync // e2 |] 
+  | SWhile : forall (e1 e2 : exp) (heap : heap) (sync : sync_state),
+             [| heap // sync // (WHILE e1 DO e2) ===>
+                heap // sync // (IFE e1 THEN e2; (WHILE e1 DO e2)  ELSE (EConst 0)) |]
+  | SLet1  : forall x e e' C ae heap sync heap' sync' body,
+             lookup_heap heap x = None ->
+             D e C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // (LET x ::= e IN body) ===>
+                heap'// sync'// (LET x::= (plug e' C) IN body) |]
+  | SLet2  : forall x v p body heap sync,
+             lookup_heap heap x = None ->
+             value v ->
+             [| heap // sync // (LET x ::= v IN body) ===> 
+                (HHeap v p x heap) // sync // body |]
+  | SLookup: forall x c heap sync v p,
+             lookup_heap heap x = Some (exist value v p) ->
+             [| heap // sync // x %% c ===> heap // sync // v |]
+  | SAssgn1: forall x c e C ae e' heap sync heap' sync',
+             D e C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // x % (c) ::= e ===>
+                heap'// sync'// x % (c) ::= (plug e' C) |]
+  | SAssgn2 : forall x c v p heap sync,
+              value v ->
+              [| heap // sync // x % (c) ::= v ===>
+                 (HHeap v p x heap) // sync // v |]
+  | SPrim1  : forall p vs e C ae e' es heap heap' sync sync',
+              Forall value vs ->
+              D e C ae ->
+              [| heap // sync // ae ===> heap' // sync' // e' |] ->
+              [| heap // sync // EPrim p (vs ++ (e::es)) ===> 
+                 heap'// sync'// EPrim p (vs ++ ((plug e' C)::es)) |]
+  | SPrim2  : forall p vs heap sync sync' v' pv,
+              Forall value vs ->
+              I p vs sync = Some (exist value v' pv, sync') ->
+              [| heap // sync // EPrim p vs ===>
+                 heap // sync'// v' |]
+  | SWrong  : forall p vs heap sync,
+              Forall value vs ->
+              I p vs sync = None ->
+              tstep (ThreadState heap sync (TExpr (EPrim p vs)))
+                   (ThreadState heap sync Wrong)
+  | SApp1   : forall f C ae e' F es heap heap' sync sync',
+              D f C ae ->
+              [| heap // sync // ae ===> heap' // sync' // e' |] ->
+              [| heap // sync // EApp f F es ===>
+                 heap'// sync'// EApp (plug e' C) F es |]
+  | SApp2   : forall ids vs e C ae e' F es body heap sync heap' sync',
+              D e C ae ->
+              [| heap // sync // ae ===> heap' // sync' // e' |] ->
+              [| heap // sync // EApp (EFunction ids body) F ((extract_exps vs) ++ e::es) ===>
+                 heap'// sync'// EApp (EFunction ids body) F ((extract_exps vs) ++ e'::es) |]
+  | SApp3   : forall ids vs v p F es body heap sync,
+              [| heap // sync // EApp (EFunction ids body) F ((extract_exps vs) ++ v::es) ===>
+                 heap // sync // EApp (EFunction ids body) F ((extract_exps (vs ++ [exist value v p])) ++ es) |]
+  | SSeq1   : forall e C ae e' e2 heap heap' sync sync',
+              D e C ae ->
+              [| heap // sync // ae ===> heap' // sync' // e' |] ->
+              [| heap // sync // e; e2 ===> heap' // sync' // (plug e' C); e2 |]
+  | SSeq2   : forall v e2 heap sync,
+              value v ->
+              [| heap // sync // v; e2 ===> heap // sync // e2 |]
+  | SAtomic : forall e heap sync,
+              [| heap // sync // EAtomic e ===> heap // sync // EInAtomic e |]
+  | SInAtom1: forall e C ae e' heap heap' sync sync',
+              D e C ae ->
+              [| heap // sync // ae ===> heap' // sync' // e' |] ->
+              [| heap // sync // EInAtomic e ===> heap' // sync' // EInAtomic (plug e' C) |]
+  | SInAtom2: forall v heap sync,
+              value v ->
+              [| heap // sync // EInAtomic v ===> heap // sync // v |]
+  where "'[|' ha '//' sa '//' ea '===>' hb '//' sb '//' eb '|]'" := 
+  (tstep (ThreadState ha sa (TExpr ea))
+        (ThreadState hb sb (TExpr eb))).
+
+Hint Constructors tstep.
+
 Inductive progstate : Type :=
   | ProgState : heap -> sync_state -> list thread -> progstate.
 
 Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" (at level 50, no associativity).
 
-
 Inductive step : progstate -> progstate -> Prop :=
-  | SIf    : forall e C ae e' e1 e2 heap1 heap' sync sync' ta tb tb',
-             D e C ae ->
-             [| heap1 // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |]  ->
-             [| heap1 // sync // ta, (IFE e THEN e1 ELSE e2), tb ===>
-                heap'// sync'// ta, (IFE (plug e' C) THEN e1 ELSE e2), tb' |]
-  | SIfV   : forall (v e1 e2 : exp) heap sync ta tb,
-             value v -> 
-             v <> EConst 0 ->
-             [| heap // sync // ta, (IFE v THEN e1 ELSE e2), tb ===>
-                heap // sync // ta, e1, tb |]
-  | SIfZ   : forall e1 e2 heap sync ta tb,
-             [| heap // sync // ta, IFE (EConst 0) THEN e1 ELSE e2, tb ===>
-                heap // sync // ta, e2, tb |] 
-  | SWhile : forall (e1 e2 : exp) (heap : heap) (sync : sync_state) (ta tb : list thread),
-             [| heap // sync // ta, (WHILE e1 DO e2), tb ===>
-                heap // sync // ta, (IFE e1 THEN e2; (WHILE e1 DO e2)  ELSE (EConst 0)), tb |]
-  | SLet1  : forall x e e' C ae heap sync heap' sync' body ta tb tb',
-             lookup_heap heap x = None ->
-             D e C ae ->
-             [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-             [| heap // sync // ta, (LET x ::= e IN body), tb ===>
-                heap'// sync'// ta, (LET x::= (plug e' C) IN body), tb' |]
-  | SLet2  : forall x v p body heap sync ta tb,
-             lookup_heap heap x = None ->
-             value v ->
-             [| heap // sync // ta, (LET x ::= v IN body), tb ===> 
-                (HHeap v p x heap) // sync // ta, body, tb |]
-  | SLookup: forall x c heap sync ta tb v p,
-             lookup_heap heap x = Some (exist value v p) ->
-             [| heap // sync // ta, x %% c, tb ===> heap // sync // ta, v, tb |]
-  | SAssgn1: forall x c e C ae e' heap sync heap' sync' ta tb tb',
-             D e C ae ->
-             [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-             [| heap // sync // ta, x % (c) ::= e, tb ===>
-                heap'// sync'// ta, x % (c) ::= (plug e' C), tb' |]
-  | SAssgn2 : forall x c v p heap sync ta tb,
-              value v ->
-              [| heap // sync // ta, x % (c) ::= v, tb ===>
-                 (HHeap v p x heap) // sync // ta, v, tb |]
-  | SPrim1  : forall p vs e C ae e' es heap heap' sync sync' ta tb tb',
-              Forall value vs ->
-              D e C ae ->
-              [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb |] ->
-              [| heap // sync // ta, EPrim p (vs ++ (e::es)), tb ===> 
-                 heap'// sync'// ta, EPrim p (vs ++ ((plug e' C)::es)), tb' |]
-  | SPrim2  : forall p vs heap sync sync' v' pv ta tb,
-              Forall value vs ->
-              I p vs sync = Some (exist value v' pv, sync') ->
-              [| heap // sync // ta, EPrim p vs, tb ===>
-                 heap // sync'// ta, v', tb |]
-  | SWrong  : forall p vs heap sync ta tb,
-              Forall value vs ->
-              I p vs sync = None ->
-              step (ProgState heap sync (ta ++ (TExpr (EPrim p vs))::tb))
-                   (ProgState heap sync (ta ++ Wrong::tb))
-  | SApp1   : forall f C ae e' F es heap heap' sync sync' ta tb tb',
-              D f C ae ->
-              [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-              [| heap // sync // ta, EApp f F es, tb ===>
-                 heap'// sync'// ta, EApp (plug e' C) F es, tb' |]
-  | SApp2   : forall ids vs e C ae e' F es body ta tb tb' heap sync heap' sync',
-              D e C ae ->
-              [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-              [| heap // sync // ta, EApp (EFunction ids body) F ((extract_exps vs) ++ e::es), tb ===>
-                 heap' // sync' // ta, EApp (EFunction ids body) F ((extract_exps vs) ++ e'::es), tb' |]
-  | SApp3   : forall ids vs v p F es body ta tb heap sync,
-              [| heap // sync // ta, EApp (EFunction ids body) F ((extract_exps vs) ++ v::es), tb ===>
-                 heap // sync // ta, EApp (EFunction ids body) F ((extract_exps (vs ++ [exist value v p])) ++ es), tb |]
-  | SSeq1   : forall e C ae e' e2 ta tb tb' heap heap' sync sync',
-              D e C ae ->
-              [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-              [| heap // sync // ta, e; e2, tb  ===> heap' // sync' // ta, (plug e' C); e2, tb' |]
-  | SSeq2   : forall v e2 ta tb heap sync,
-              value v ->
-              [| heap // sync // ta, v; e2, ta  ===> heap // sync // ta, e2, tb |]
-  | SAtomic : forall e ta tb heap sync,
-              [| heap // sync // ta, EAtomic e, tb  ===> heap // sync // ta, EInAtomic e, tb |]
-  | SInAtom1: forall e C ae e' heap heap' sync sync' ta tb tb',
-              D e C ae ->
-              [| heap // sync // ta, ae, tb ===> heap' // sync' // ta, e', tb' |] ->
-              [| heap // sync // ta, EInAtomic e, tb ===> heap' // sync' // ta, EInAtomic (plug e' C), tb' |]
-  | SInAtom2: forall v heap sync ta tb,
-              value v ->
-              [| heap // sync // ta, EInAtomic v, tb ===> heap // sync // ta, v, tb |]
-  | SFork   : forall e heap sync ta tb,
-              [| heap // sync // ta, EFork e, tb ===> heap // sync // ta, EConst 0, tb ++ [TExpr e] |]
+  | Step : forall ha hb sa sb ta1 ta2 tb1 tb2 ea eb,
+             [| ha // sa // ea ===> hb // sb // eb |] ->
+             [| ha // sa // ta1, ea, ta2 ===> hb // sb // tb1, eb, tb2 |]
   where "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" := 
   (step (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
         (ProgState hb sb (tb1 ++ (TExpr eb)::tb2))).
 
 Hint Constructors step.
+
+
+
 
 Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" (at level 50, no associativity).
 
@@ -393,6 +407,7 @@ Example Example1 : forall heap sync_state ta tb, [| heap // sync_state // ta, (E
 Proof with simpl; auto.
   intros.
   eapply rsc_step...
+  eapply Step.
   eapply SPrim2...
 Qed.
 
@@ -402,6 +417,7 @@ Example Example2 : forall heap sync ta tb,
 Proof with simpl; auto.
   intros. 
   eapply rsc_step.
+  eapply Step.
    eapply SIf...
    eapply SPrim2...
   eapply rsc_refl.
@@ -415,12 +431,15 @@ Example Example3 : forall heap sync ta tb,
 Proof with simpl; auto.
   intros. 
   eapply rsc_step.
+  eapply Step.
   eapply SIf...
   eapply SPrim2...
   eapply rsc_step.
+  eapply Step.
     eapply SIfV...
     discriminate.
-  eauto.
+  eapply rsc_refl.
+  Grab Existential Variables. auto. auto.
 Qed.
 
 Definition X := Id 0.
@@ -433,27 +452,34 @@ Proof with simpl; auto.
   intros.
   eapply rsc_step...
   eapply rsc_step.
+  eapply Step.
     eapply SIf...
     eapply SLookup...
   eapply rsc_step.
+  eapply Step.
     eapply SIfV... discriminate.
   eapply rsc_step.
+  eapply Step.
     eapply SSeq1...
     eapply SAssgn1...
     apply SPrim1 with (vs:=[]) (ae:=X %% CNone)...
     eapply SLookup...
   eapply rsc_step.
+  apply Step.
     eapply SSeq1... 
     eapply SAssgn1...
     eapply SPrim2...
   eapply rsc_step.
+  apply Step.
     eapply SSeq1...
   eapply rsc_step...
   eapply rsc_step...
   eapply rsc_step.
+  apply Step.
     eapply SIf...
     eapply SLookup...
   eauto.
+  Grab Existential Variables. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. auto. 
 Qed.
 
 (* Things we would like to show here:
@@ -504,8 +530,6 @@ Proof with simpl; auto.
     eauto.
     (* The expression contains an ae *)
     inversion H. inversion H0. inversion H1. eauto.
-  (* Case EFork *)
-  right. eauto.
   (* Case EAtomic *)
   right. eauto.
   (* Case EInAtomic *)
@@ -614,9 +638,6 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
   (EWhile cond body) 
   (seq_comp t1 (iterative_closure (seq_comp t1 t2)))
 (* We omit invoke *)
-| T_Fork     : forall h s e t,
-  has_type h s e t -> 
-  has_type h s (EFork e) TAtom
 | T_Atomic   : forall h s e t,  
   has_type h s e t -> 
   t <> TTop ->
@@ -661,7 +682,6 @@ Proof.
     SCase "T_Let". admit. (* Not dealing with lets for the time being *)
     SCase "T_IF". eauto.
     SCase "T_While". eauto.
-    SCase "T_Fork". eauto.
     SCase "T_Atomic". eauto.
     SCase "T_Inatomic". eauto.
   Case "Wrong". destruct a; auto.
@@ -685,7 +705,7 @@ Theorem assgn_progress : forall e T id c h s (ta tb : list (thread * atom)),
 Proof with simpl; auto. intros.
 inversion H2...
     SCase "e is a value". exists e. exists (HHeap e H3 id h). exists s. exists tb. split. 
-      SSCase "===>". apply SAssgn2...  split.
+      SSCase "===>". apply Step. apply SAssgn2...  split.
       SSCase "tb is well-typed". induction tb.
         SSSCase "tb = []"... 
         SSSCase "tb = a0::tb'". apply Forall_cons. eapply heap_change_well_typed. 
@@ -725,39 +745,30 @@ Proof with simpl; auto.
   Case "T_SyncLoc". left...
   Case "T_Prim". (* right. induction es. esplit. exists h. exists s. exists tb. split. induction p. eapply SPrim2...  *) admit.
   (* Case "EFunction". left... *)
-  Case "T_Read". right. inversion H1 as [v]. inversion H2 as [p]. exists v. exists h. exists s. exists tb. split. eapply SLookup with (p:=p)... split...
-  Case "T_ReadRace". right. inversion H1 as [v]. inversion H2 as [p]. exists v. exists h. exists s. exists tb. split. eapply SLookup with (p:=p)... split...
+  Case "T_Read". right. inversion H1 as [v]. inversion H2 as [p]. exists v. exists h. exists s. exists tb. split. apply Step. eapply SLookup with (p:=p)... split...
+  Case "T_ReadRace". right. inversion H1 as [v]. inversion H2 as [p]. exists v. exists h. exists s. exists tb. split. apply Step. eapply SLookup with (p:=p)... split...
   Case "T_Assgn". right. apply assgn_progress with (T:=t)... 
   SCase "T_ReadRace". right. apply assgn_progress with (T:=t)...
   SCase "T_Let". admit.
   SCase "T_If". right. destruct IHhas_type1...
     SSCase "value cond". destruct cond; inversion H1.
       SSSCase "EConst n". destruct n.
-        SSSSCase "EConst 0". exists b2. exists h. exists s. exists tb. split. eapply SIfZ... auto.
-        SSSSCase "EConst n". exists b1. exists h. exists s. exists tb. split. eapply SIfV... discriminate. auto.
-      SSSCase "ESyncLoc". exists b1. exists h. exists s. exists tb. split. eapply SIfV... discriminate. auto.
-      SSSCase "EFunction". exists b1. exists h. exists s. exists tb. split. eapply SIfV... discriminate. auto.
+        SSSSCase "EConst 0". exists b2. exists h. exists s. exists tb. split. apply Step. eapply SIfZ... auto.
+        SSSSCase "EConst n". exists b1. exists h. exists s. exists tb. split. apply Step. eapply SIfV... discriminate. auto.
+      SSSCase "ESyncLoc". exists b1. exists h. exists s. exists tb. split. apply Step. eapply SIfV... discriminate. auto.
+      SSSCase "EFunction". exists b1. exists h. exists s. exists tb. split. apply Step. eapply SIfV... discriminate. auto.
     SSCase "cond is an exp". inversion_clear H1 as [e']. inversion_clear H2 as [h']. 
                              inversion_clear H1 as [s']. inversion_clear H2 as [tb']. inversion H1.
                              exists (IFE e' THEN b1 ELSE b2). exists h'. exists s'. exists tb'. split. 
       SSSCase "===>". admit.
       SSSCase "tb' & ta are well-typed". solve_by_inversion_step auto.
   SCase "T_While". admit.
-  SCase "T_Fork". right. destruct IHhas_type...
-    SSCase "value e". exists (EConst 0). exists h. exists s. exists (tb ++ [(TExpr e, t)]). split. 
-      SSSCase "===>". rewrite fst_split_comm2. eapply SFork. split.
-      SSSCase "tb' is well-typed". inversion H0... apply Forall_cons... apply forall_app...
-      SSSCase "ta  is well-typed"...
-    SSCase "e is an exp". exists (EConst 0). exists h. exists s. exists (tb ++ [(TExpr e, t)]). split. 
-      SSSCase "===>". rewrite fst_split_comm2. eapply SFork. split. 
-      SSSCase "tb' is well-typed". inversion H0... apply Forall_cons... apply forall_app...
-      SSSCase "ta  is well-typed"...
   SCase "T_Atomic". right. exists (EInAtomic e). exists h. exists s. exists tb. split. 
-    SSCase "===>". eapply SAtomic.
+    SSCase "===>". apply Step. eapply SAtomic.
     SSCase "ta & ta are well-typed". destruct IHhas_type...
   SCase "T_InAtomic". right. destruct IHhas_type... 
     SSCase "value e". exists e. exists h. exists s. exists tb. split.
-      SSSCase "===>". eapply SInAtom2...
+      SSSCase "===>". apply Step. eapply SInAtom2...
       SSSCase "ta & tb are well-typed"...
     SSCase "e is an exp". inversion_clear H3 as [e']. inversion_clear H4 as [h']. 
                           inversion_clear H3 as [s']. inversion_clear H4 as [tb'].
