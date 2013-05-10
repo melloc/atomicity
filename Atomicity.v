@@ -574,66 +574,104 @@ Definition seq_comp_many ts : atom :=
     | []       => TBoth
 end.
 
-Inductive has_type : exp -> atom -> Prop := 
-| T_Const     : forall n, has_type (EConst n) TBoth
-| T_SyncLoc   : forall id, has_type (ESyncLoc id) TBoth
-| T_Prim      : forall p es ts,
-  Forall2 has_type es ts -> 
-  has_type (EPrim p es) (seq_comp_many (ts ++ [prim_type p]))
+Inductive has_type : heap -> sync_state -> exp -> atom -> Prop := 
+| T_Const     : forall h s n, has_type h s (EConst n) TBoth
+| T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
+| T_Prim      : forall h s p es ts,
+  Forall2 (has_type h s) es ts -> 
+  has_type h s (EPrim p es) (seq_comp_many (ts ++ [prim_type p]))
 (* | T_Fun       : forall  *)
-| T_Read      : forall id, has_type (EId id CNone) TBoth
-| T_ReadRace  : forall id, has_type (EId id CRace) TAtom
-| T_Assgn     : forall id e t, 
-  has_type e t -> 
-  has_type (EAssgn id CNone e) (seq_comp t TBoth)
-| T_AssgnRace : forall id e t, 
-  has_type e t -> 
-  has_type (EAssgn id CRace e) (seq_comp t TAtom)
-| T_Let      : forall id e1 t1 e2 t2,
-  has_type e1 t1 ->
-  has_type e2 t2 ->
-  has_type (ELet id e1 e2) (seq_comp t1 t2)
-| T_If       : forall cond b1 b2 t1 t2 t3, 
-  has_type cond t1 -> 
-  has_type b1 t2 -> 
-  has_type b2 t3 -> 
-  has_type (EIf cond b1 b2) (seq_comp t1 (lub t2 t3))
-| T_While    : forall cond t1 body t2,
-  has_type cond t1 ->
-  has_type body t2 ->
-  has_type 
+| T_Read      : forall id h s v p, (lookup_heap h id) = Some (exist value v p) -> has_type h s (EId id CNone) TBoth
+| T_ReadRace  : forall id h s v p, (lookup_heap h id) = Some (exist value v p) -> has_type h s (EId id CRace) TAtom
+| T_Assgn     : forall id h s e t, 
+  has_type h s e t -> 
+  has_type h s (EAssgn id CNone e) (seq_comp t TBoth)
+| T_AssgnRace : forall id h s e t, 
+  has_type h s e t -> 
+  has_type h s (EAssgn id CRace e) (seq_comp t TAtom)
+| T_Let      : forall id h s e1 t1 e2 t2,
+  (lookup_heap h id) = None ->
+  has_type h s e1 t1 ->
+  has_type h s e2 t2 ->
+  has_type h s (ELet id e1 e2) (seq_comp t1 t2)
+| T_If       : forall h s cond b1 b2 t1 t2 t3, 
+  has_type h s cond t1 -> 
+  has_type h s b1 t2 -> 
+  has_type h s b2 t3 -> 
+  has_type h s (EIf cond b1 b2) (seq_comp t1 (lub t2 t3))
+| T_While    : forall h s cond t1 body t2,
+  has_type h s cond t1 ->
+  has_type h s body t2 ->
+  has_type h s
   (EWhile cond body) 
   (seq_comp t1 (iterative_closure (seq_comp t1 t2)))
 (* We omit invoke *)
-| T_Fork     : forall e t,
-  has_type e t -> 
-  has_type (EFork e) TAtom
-| T_Atomic   : forall e t,  
-  has_type e t -> 
+| T_Fork     : forall h s e t,
+  has_type h s e t -> 
+  has_type h s (EFork e) TAtom
+| T_Atomic   : forall h s e t,  
+  has_type h s e t -> 
   t <> TTop ->
-  has_type (EAtomic e) t
-| T_InAtomic    : forall e t,  
-  has_type e t -> 
+  has_type h s (EAtomic e) t
+| T_InAtomic    : forall h s e t,  
+  has_type h s e t -> 
   t <> TTop ->
-  has_type (EInAtomic e) t
+  has_type h s (EInAtomic e) t
 (* We omit wrong, because we have no EWrong *).
 
 
 
+Definition well_typed (h:heap) (s:sync_state) (et: thread * atom) : Prop :=
+match et with
+| ((TExpr e), a) =>  has_type h s e a
+| (Wrong, TBoth) => True
+| _ => False
+end.
 
+Check HHeap.
+Lemma heap_change_well_typed : 
+  forall h s et id e p, 
+    well_typed h s et -> 
+    (lookup_heap h id) = Some (exist value v p) ->
+    value e ->
+    has_type h s e TBoth -> 
+    well_typed (HHeap e p id h) s et.
+Proof.
+  intros.
+  admit.
+Qed.
 
-Theorem progress : 
-  forall e T h h' s s' ta ta' tb tb', 
-    has_type e T ->
-    value e \/ exists e', 
-      [| h // s // ta, e, tb ===> 
-         h' // s' // ta', e', tb' |].
+Theorem progress_thread : 
+  forall e T h s (ta tb : list (thread * atom)), 
+    Forall (well_typed h s) ta ->
+    Forall (well_typed h s) tb ->
+    has_type h s e T ->
+    value e \/ exists e' h' s' (tb' : list (thread * atom)), 
+      [| h // s // fst (split ta), e, fst (split tb) ===> 
+         h' // s' // fst (split ta), e', fst (split tb') |] /\ Forall (well_typed h' s') tb' /\ Forall (well_typed h' s') ta.
 Proof with simpl; auto.
-  intros. induction e.
-  Case "EConst". left...
-  Case "ESyncLoc". left...
-  Case "EFunction". left...
-  Case "EId". right.
+  intros. 
+  induction H1.
+  Case "T_Const". left...
+  Case "T_SyncLoc". left...
+  Case "T_Prim". right. admit.
+  (* Case "EFunction". left... *)
+  Case "T_Read". right. exists v. exists h. exists s. exists tb. split. eapply SLookup with (p:=p0)... split...
+  Case "T_ReadRace". right; exists v; exists h; exists s; exists tb. split. eapply SLookup with (p:=p0)... split...
+  Case "EAssgn". right. destruct IHhas_type...
+     exists e. exists (HHeap e H2 id h). exists s. exists tb. split. apply SAssgn2... split. induction tb. auto. apply Forall_cons. eapply heap_change_well_typed. inversion H0... auto. 
+       inversion H1; subst; try inversion H2... apply IHtb. inversion H0; subst. assumption. 
+     inversion H0 as [e']. exists e'. 
+     inversion H1 as [h']. exists h'. 
+     inversion H2 as [s']. exists s'. 
+     inversion H3 as [tb']. exists tb'.
+     Check SAssgn1.
+     apply SAssgn1.
+     repeat esplit. eapply SAssgn1... 
+
+  Case "ESeq". right. (* repeat esplit. eapply SSeq1...  *) admit.
+  Case "EPrim". right. induction l. inversion H. inversion H3. subst. repeat esplit. eapply SPrim2... 
+  
  (* generalize dependent h'. *)
  (* generalize dependent s'. *)
  (* generalize dependent ta'. *)
