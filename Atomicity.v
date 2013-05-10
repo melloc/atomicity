@@ -380,7 +380,7 @@ Inductive coarsestep : progstate -> progstate -> Prop :=
 
 Hint Constructors refl_step_closure.
 
-Definition many_steps := refl_step_closure step.
+Definition  many_steps := refl_step_closure step.
 
 Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>*' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" := 
 (many_steps (ProgState ha sa (ta1 ++ (TExpr ea)::ta2))
@@ -575,14 +575,19 @@ Definition seq_comp_many ts : atom :=
 end.
 
 Inductive has_type : heap -> sync_state -> exp -> atom -> Prop := 
+(* | T_subtyp    :  *)
 | T_Const     : forall h s n, has_type h s (EConst n) TBoth
 | T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
 | T_Prim      : forall h s p es ts,
   Forall2 (has_type h s) es ts -> 
   has_type h s (EPrim p es) (seq_comp_many (ts ++ [prim_type p]))
 (* | T_Fun       : forall  *)
-| T_Read      : forall id h s v p, (lookup_heap h id) = Some (exist value v p) -> has_type h s (EId id CNone) TBoth
-| T_ReadRace  : forall id h s v p, (lookup_heap h id) = Some (exist value v p) -> has_type h s (EId id CRace) TAtom
+| T_Read      : forall id h s,
+  (exists v p, (lookup_heap h id) = Some (exist value v p)) -> 
+  has_type h s (EId id CNone) TBoth
+| T_ReadRace  : forall id h s, 
+  (exists v p, (lookup_heap h id) = Some (exist value v p)) -> 
+  has_type h s (EId id CRace) TAtom
 | T_Assgn     : forall id h s e t, 
   has_type h s e t -> 
   has_type h s (EAssgn id CNone e) (seq_comp t TBoth)
@@ -619,7 +624,7 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
   has_type h s (EInAtomic e) t
 (* We omit wrong, because we have no EWrong *).
 
-
+Hint Constructors has_type.
 
 Definition well_typed (h:heap) (s:sync_state) (et: thread * atom) : Prop :=
 match et with
@@ -628,17 +633,35 @@ match et with
 | _ => False
 end.
 
-Check HHeap.
 Lemma heap_change_well_typed : 
   forall h s et id e p, 
     well_typed h s et -> 
-    (lookup_heap h id) = Some (exist value v p) ->
     value e ->
-    has_type h s e TBoth -> 
+    has_type h s e TBoth ->
     well_typed (HHeap e p id h) s et.
 Proof.
-  intros.
-  admit.
+  intros h s (t,a) id e_new e_new_evidence WT V HT.
+  destruct t. 
+  Case "TExpr". simpl well_typed in *. induction WT.
+    SCase "T_Const". subst. auto.
+    SCase "T_SyncLoc". subst. auto.
+    SCase "T_Prim". subst. apply T_Prim. induction H. auto. apply Forall2_cons. 
+      (* No induction hypothesis. So sad *) admit. admit.
+    SCase "T_Read". subst. apply T_Read. simpl lookup_heap. destruct beq_id. 
+      SSCase "ids are equal". exists e_new. exists e_new_evidence. reflexivity.
+      SSCase "ids aren't equal". assumption.
+    SCase "T_ReadRace". subst. apply T_ReadRace. simpl  lookup_heap. destruct beq_id.
+      SSCase "ids are equal". exists e_new. exists e_new_evidence. reflexivity.
+      SSCase "ids aren't equal". assumption;
+    SCase "T_Assgn". eauto.
+    SCase "T_AssgnRace". eauto.
+    SCase "T_Let". admit. (* Not dealing with lets for the time being *)
+    SCase "T_IF". eauto.
+    SCase "T_While". eauto.
+    SCase "T_Fork". eauto.
+    SCase "T_Atomic". eauto.
+    SCase "T_Inatomic". eauto.
+  Case "Wrong". destruct a; auto.
 Qed.
 
 Theorem progress_thread : 
