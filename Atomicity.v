@@ -755,6 +755,31 @@ Proof with simpl; auto.
   SCase "T_Atomic". admit.
   SCase "T_InAtomic". admit.
 Qed.
+
+ 
+Lemma values_dont_step : forall h h' s s' e e' ta tb ta' tb',
+  value e -> not ([| h // s // ta, e, tb ===>  h' // s' // ta', e', tb' |]).
+Proof.
+intros. inversion H. unfold not. intros.
+Admitted.
+
+(* Lemma values_dont_step : forall h h' s s' e e' ta tb ta' tb',  *)
+(*   value e ->  *)
+(*   (not ([| h // s // ta, e, tb ===>  h' // s' // ta', e', tb' |])) \/ *)
+(*   exists  *)
+(* (*  *) *)
+
+Theorem preservation_thread : forall h s t t' ta tb T,
+  well_typed h s ((TExpr t), T) ->
+  value t \/ exists h' s' tb',
+  [| h // s // ta, t, tb ===> h' // s' // ta, t', tb' |] ->
+  well_typed h s ((TExpr t'),T) \/ value t.
+Proof.
+intros. generalize dependent t'. induction H. left. exists h. exists s. exists tb. intros. apply values_dont_step in H. inversion H. apply VConst.
+exists h. exists s. exists tb. intros. apply values_dont_step in H. inversion H. apply VSyncLoc.
+
+admit.
+Qed.
  
   
 
