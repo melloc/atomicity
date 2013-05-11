@@ -39,7 +39,12 @@ Inductive exp : Set :=
   | EId       : id -> conflict -> exp
   | EAssgn    : id -> conflict -> exp -> exp
   | ESeq      : exp -> exp -> exp
-  | EPrim     : primitive -> list exp -> exp
+  | EAssert   : exp -> exp
+  | EPlus     : exp -> exp -> exp
+  | EMinus    : exp -> exp -> exp
+  | ENewLock  : id  -> exp
+  | EAcquire  : id  -> exp
+  | ERelease  : id  -> exp
   | EApp      : exp -> list id -> list exp -> exp
   | EIf       : exp -> exp -> exp -> exp
   | EWhile    : exp -> exp -> exp
@@ -63,8 +68,8 @@ Inductive thread : Type :=
 Notation "x '%' b '::=' n" := (EAssgn x b n) (at level 60).
 Notation "x '%%' b" := (EId x b) (at level 70).
 Notation "a ';' b" := (ESeq a b) (at level 80).
-Notation "a 'e+' b" := (EPrim Plus [a, b]) (at level 70).
-Notation "a 'e-' b" := (EPrim Minus [a, b]) (at level 70).
+Notation "a 'e+' b" := (EPlus a b) (at level 70).
+Notation "a 'e-' b" := (EMinus a b) (at level 70).
 Notation "'IFE' x 'THEN' a 'ELSE' b" := (EIf x a b) (at level 80).
 Notation "'WHILE' a 'DO' b" := (EWhile a b) (at level 60).
 Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
@@ -72,7 +77,11 @@ Notation "'LET' a '::=' b 'IN' c" := (ELet a b c) (at level 60).
 Inductive C  : Set :=
   | C_hole   : C
   | C_assgn  : id -> conflict -> C -> C
-  | C_prim   : primitive -> list exp -> C -> list exp -> C
+  | C_plus1  : C -> exp -> C
+  | C_plus2  : exp -> C -> C
+  | C_minus1 : C -> exp -> C
+  | C_minus2 : exp -> C -> C
+  | C_assert : C -> C
   | C_app_1  : C -> list id -> list exp -> C
   | C_app_2  : sig value -> list id -> list (sig value) -> C -> list exp -> C
   | C_if     : C -> exp -> exp -> C
@@ -87,7 +96,12 @@ Inductive ae : exp -> Prop :=
   | ae_let   : forall id v e, value v -> ae (ELet id v e)
   | ae_id    : forall id c, ae (EId id c)
   | ae_assgn : forall id c v, value v -> ae (EAssgn id c v)
-  | ae_prim  : forall prim vs, Forall value vs -> ae (EPrim prim vs)
+  | ae_assert   : forall e, value e -> ae (EAssert e)
+  | ae_plus   : forall a b, value a -> value b -> ae (EPlus a b)
+  | ae_minus  : forall a b, value a -> value b -> ae (EMinus a b)
+  | ae_newlock: forall id, ae (ENewLock id)
+  | ae_acquire: forall id, ae (EAcquire id)
+  | ae_release: forall id, ae (ERelease id)
   | ae_app   : forall f F vs, value f -> Forall value vs -> ae (EApp f F vs)
   | ae_atom  : forall e, ae (EAtomic e)
   | ae_inatom: forall v, value v -> ae (EInAtomic v)
@@ -112,12 +126,26 @@ Inductive D   : exp -> C -> exp -> Prop :=
   | DAssgn    : forall C rhs' id conflict rhs,
                 D rhs C rhs' -> 
                 D (EAssgn id conflict rhs) (C_assgn id conflict C) rhs'
-  | DSeq     : forall e1 C e1' e2,
+  | DSeq      : forall e1 C e1' e2,
                 D e1 C e1' ->
                 D (ESeq e1 e2) (C_seq C e2) e1'
-  | DPrim     : forall p e e' vs C es,
-                D e C e' ->
-                D (EPrim p (vs ++ e::es)) (C_prim p vs C es) e'
+  | DAssert   : forall e C ae, 
+                D e C ae ->
+                D (EAssert e) (C_assert C) ae
+  | DPlus1    : forall a C ae b,
+                D a C ae ->
+                D (EPlus a b) (C_plus1 C b) ae
+  | DPlus2    : forall v b C ae,
+                value v ->
+                D b C ae ->
+                D (EPlus v b) (C_plus2 v C) ae
+  | DMinus1   : forall a C ae b,
+                D a C ae ->
+                D (EMinus a b) (C_minus1 C b) ae
+  | DMinus2   : forall v b C ae,
+                value v ->
+                D b C ae ->
+                D (EMinus v b) (C_minus2 v C) ae
   | DApp1     : forall f f' C F ids es,
                 D f C f' ->
                 D (EApp f F es) (C_app_1 C ids es) f'
@@ -142,7 +170,11 @@ Fixpoint plug (e : exp) (cxt : C) :=
 match cxt with
   | C_hole   => e
   | C_assgn id conflict cxt => EAssgn id conflict (plug e cxt)
-  | C_prim  p vs cxt es     => EPrim p (vs ++ ((plug e cxt)::es))
+  | C_plus1 cxt b           => EPlus (plug e cxt) b
+  | C_plus2 v   cxt         => EPlus v (plug e cxt)
+  | C_minus1 cxt b          => EMinus (plug e cxt) b
+  | C_minus2 v   cxt        => EMinus v (plug e cxt)
+  | C_assert cxt            => EAssert (plug e cxt)
   | C_app_1 cxt F es        => EApp (plug e cxt) F es
   | C_app_2 (exist f p) F vs cxt es   
                             => EApp f F ((extract_exps vs) ++ (plug e cxt)::es)
@@ -226,7 +258,12 @@ Fixpoint contains_inatom e : bool :=
     | EAssgn _ _ e => contains_inatom e
     | ESeq e1 e2 => 
       contains_inatom e1 || contains_inatom e2
-    | EPrim _ es => fold_left orb (map contains_inatom es) false
+    | EPlus a b  => contains_inatom a || contains_inatom b
+    | EMinus a b  => contains_inatom a || contains_inatom b
+    | EAssert e  => contains_inatom e
+    | ENewLock _ => false
+    | EAcquire _ => false
+    | ERelease  _ => false
     | EApp f _ args => 
       (contains_inatom f) ||
       (fold_left orb (map contains_inatom args) false)
@@ -297,26 +334,49 @@ Inductive tstep : threadstate -> threadstate -> Prop :=
              [| heap // sync // ae ===> heap' // sync' // e' |] ->
              [| heap // sync // x % (c) ::= e ===>
                 heap'// sync'// x % (c) ::= (plug e' C) |]
-  | SAssgn2 : forall x c v p heap sync,
-              value v ->
-              [| heap // sync // x % (c) ::= v ===>
-                 (HHeap v p x heap) // sync // v |]
-  | SPrim1  : forall p vs e C ae e' es heap heap' sync sync',
-              Forall value vs ->
-              D e C ae ->
-              [| heap // sync // ae ===> heap' // sync' // e' |] ->
-              [| heap // sync // EPrim p (vs ++ (e::es)) ===> 
-                 heap'// sync'// EPrim p (vs ++ ((plug e' C)::es)) |]
-  | SPrim2  : forall p vs heap sync sync' v' pv tid,
-              Forall value vs ->
-              I p vs sync tid (exist value v' pv) sync' ->
-              [| heap // sync // EPrim p vs ===>
-                 heap // sync'// v' |]
-  | SWrong  : forall p vs heap tid v sync sync',
-              Forall value vs ->
-              ~ I p vs sync tid v sync' ->
-              tstep (ThreadState heap sync (TExpr (EPrim p vs)))
-                   (ThreadState heap sync Wrong)
+  | SAssgn2: forall x c v p heap sync,
+             value v ->
+             [| heap // sync // x % (c) ::= v ===>
+                (HHeap v p x heap) // sync // v |]
+  | SAssert: forall heap sync e, 
+             e <> EConst 0 ->
+             [| heap // sync // EAssert e ===> heap // sync // EConst 0 |]
+  | SPlus1 : forall a C ae e' b heap sync heap' sync',
+             D a C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // EPlus a b ===> heap' // sync' // EPlus (plug e' C) b |]
+  | SPlus2 : forall v e C ae e' heap sync heap' sync',
+             value v ->
+             D e C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // EPlus v e ===> heap' // sync' // EPlus v (plug e' C) |]
+  | SPlus3 : forall a b heap sync,
+             [| heap // sync // EPlus (EConst a) (EConst b) ===> heap // sync // EConst (a + b) |]
+  | SMinus1 : forall a C ae e' b heap sync heap' sync',
+             D a C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // EMinus a b ===> heap' // sync' // EMinus (plug e' C) b |]
+  | SMinus2 : forall v e C ae e' heap sync heap' sync',
+             value v ->
+             D e C ae ->
+             [| heap // sync // ae ===> heap' // sync' // e' |] ->
+             [| heap // sync // EMinus v e ===> heap' // sync' // EMinus v (plug e' C) |]
+  | SMinus3 : forall a b heap sync,
+             [| heap // sync // EMinus (EConst a) (EConst b) ===> heap // sync // EConst (a - b) |]
+  | SNewLock: forall m heap sync,  
+              sync m = None ->
+              [| heap // sync // ENewLock m ===> heap // (update_sync sync m 0) // ESyncLoc m |]
+  | SAcquire: forall m tid heap sync,
+              sync m = Some 0 ->
+              [| heap // sync // EAcquire m ===> heap // (update_sync sync m tid) // ESyncLoc m |]
+  | SRelease: forall m tid heap sync,
+              sync m = Some tid ->
+              [| heap // sync // ERelease m ===> heap // (update_sync sync m 0) // ESyncLoc m |]
+  (* | SWrong  : forall p vs heap tid v sync sync', *)
+  (*             Forall value vs -> *)
+  (*             ~ I p vs sync tid v sync' -> *)
+  (*             tstep (ThreadState heap sync (TExpr (EPrim p vs))) *)
+  (*                  (ThreadState heap sync Wrong) *)
   | SApp1   : forall f C ae e' F es heap heap' sync sync',
               D f C ae ->
               [| heap // sync // ae ===> heap' // sync' // e' |] ->
@@ -404,22 +464,17 @@ Example Example1 : forall heap sync_state ta tb, [| heap // sync_state // ta, (E
 Proof with simpl; auto.
   intros h s ta tb.
   eapply rsc_step...
-  eapply Step.
-  apply SPrim2 with (pv:=VConst 3) (tid:=1)...
-  apply IPlus.
 Qed.
 
 Example Example2 : forall heap sync ta tb,
   [| heap // sync // ta, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), tb ===>*
      heap // sync // ta, IFE (EConst 5) THEN (EConst 5) ELSE (EConst 6), tb |].
 Proof with simpl; auto.
-  intros. 
+  intros.
   eapply rsc_step.
   eapply Step.
-   eapply SIf...
-   apply SPrim2 with (pv:=VConst 5) (tid:=1)...
-  apply IPlus.
-  eapply rsc_refl.
+  eauto.
+  eauto.
 Qed.
 
 
@@ -432,8 +487,6 @@ Proof with simpl; auto.
   eapply rsc_step.
   eapply Step.
   eapply SIf...
-  apply SPrim2 with (pv:=VConst 5) (tid:=1)...
-  apply IPlus.
   eapply rsc_step.
   eapply Step.
     eapply SIfV...
@@ -462,14 +515,12 @@ Proof with simpl; auto.
   eapply Step.
     eapply SSeq1...
     eapply SAssgn1...
-    apply SPrim1 with (vs:=[]) (ae:=X %% CNone)...
+    eapply SMinus1... 
     eapply SLookup...
   eapply rsc_step.
   apply Step.
     eapply SSeq1... 
     eapply SAssgn1...
-    apply SPrim2 with (pv:=VConst 0) (tid:=1)...
-    apply IMinus.
   eapply rsc_step.
   apply Step.
     eapply SSeq1...
@@ -491,54 +542,35 @@ Lemma decomp : forall e, value e \/ (exists C, exists e', D e C e' /\ ae e').
 Proof with simpl; auto.
   intros. 
   induction e.
-  (* Case EConst *)
-  left...
-  (* Case ESyncLoc *)
-  left...
-  (* Case EFunction *)
-  left...
-  (* Case id %% c *)
-  right... eauto.
-  (* Case id % c ::= e *)
-  right... destruct IHe; eauto. 
+  Case "EConst". left...
+  Case "ESyncLoc". left...
+  Case "EFunction". left...
+  Case "id %% c". right... eauto.
+  Case "id % c ::= e". right... destruct IHe; eauto. 
   destruct H. destruct H. destruct H. eauto.
-  (* Case e1; e2 *)
-  right... 
-  destruct IHe1.
-    (* Case value e1 *) 
-    destruct IHe2. 
-      (* Case value e2 *)
-      eauto. 
-      (* Case e2 contains an ae *)
-      destruct H0. destruct H0. destruct H0. eauto.
-    (* Case e1 contains an ae *)
-    destruct H. destruct H. destruct H. eauto. 
-  (* Case EPrim *)
-    admit.
-  (* Case EApp *)
-  admit. (* We might not do functions *)
-  (* Case EIf *)
-  right. destruct IHe1. 
-    (* The condition is a value *)
-    eauto.
-    (* The condition contains an ae *)
-    inversion H.  inversion H0. inversion H1. eauto.
-  (* Case EWhile *)
-  admit. (* While desugars, so there's no real active expression here *)
-  (* Case ELet *)
-  right. destruct IHe1. 
-    (* The expression is a value *)
-    eauto.
-    (* The expression contains an ae *)
-    inversion H. inversion H0. inversion H1. eauto.
-  (* Case EAtomic *)
-  right. eauto.
-  (* Case EInAtomic *)
-  right. inversion IHe. 
-    (* expression is a value *)
-    eauto.
-    (* expression contains an ae *)
-    inversion H. inversion H0. inversion H1. eauto.
+  Case "e1; e2". right... destruct IHe1.
+    SCase "value e1". destruct IHe2. 
+      SSCase "value e2". eauto. 
+      SSCase "e2 contains an ae". destruct H0. destruct H0. destruct H0. eauto.
+    SCase "e1 contains an ae". destruct H. destruct H. destruct H. eauto. 
+  Case "EAssert". admit. 
+  Case "EPlus". admit.
+  Case "EMinus". admit.
+  Case "ENewLock". admit.
+  Case "EAcquire". admit.
+  Case "ERelease". admit.
+  Case "EApp".  admit. (* We might not do functions *)
+  Case "EIf". right. destruct IHe1. 
+    SCase "value cond". eauto.
+    SCase "cond contains an ae". inversion H.  inversion H0. inversion H1. eauto.
+  Case "EWhile". admit. (* While desugars, so there's no real active expression here *)
+  Case "ELet". right. destruct IHe1. 
+    SCase "value e1". eauto.
+    SCase "e1 contains an ae". inversion H. inversion H0. inversion H1. eauto.
+  Case "EAtomic". right. eauto.
+  Case "EInAtomic". right. inversion IHe. 
+    SCase "value e". eauto.
+    SCase "e contains an ae". inversion H. inversion H0. inversion H1. eauto.
 Qed.
 
 (******** Typing rules and proofs **************)
@@ -613,10 +645,23 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
 (* | T_subtyp    :  *)
 | T_Const     : forall h s n, has_type h s (EConst n) TBoth
 | T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
-| T_Prim      : forall h s p es ts tid v s',
-  Forall2 (has_type h s) es ts -> 
-  (Forall value es /\ I p es s tid v s') ->
-  has_type h s (EPrim p es) (seq_comp_many (ts ++ [prim_type p]))
+| T_Plus      : forall a b h s ta tb, 
+                has_type h s a ta ->
+                has_type h s a tb ->
+                has_type h s (EPlus a b) (seq_comp_many [ta, tb, prim_type Plus])
+| T_Minus     : forall a b h s ta tb, 
+                has_type h s a ta ->
+                has_type h s a tb ->
+                has_type h s (EMinus a b) (seq_comp_many [ta, tb, prim_type Minus])
+| T_Assert    : forall e h s te,
+                has_type h s e te ->
+                has_type h s (EAssert e) (seq_comp te (prim_type Assert))
+| T_NewLock   : forall id h s,
+                has_type h s (ENewLock id) (prim_type NewLock)
+| T_Acquire   : forall id h s,
+                has_type h s (EAcquire id) (prim_type Acquire)
+| T_Release   : forall id h s,
+                has_type h s (ERelease id) (prim_type Release)
 (* | T_Fun       : forall  *)
 | T_Read      : forall id h s,
   (exists v p, (lookup_heap h id) = Some (exist value v p)) -> 
