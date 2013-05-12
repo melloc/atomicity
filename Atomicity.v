@@ -428,8 +428,6 @@ Inductive step : progstate -> progstate -> Prop :=
 Hint Constructors step.
 
 
-
-
 Reserved Notation "'[|' ha '//' sa '//' ta1 ',' ea ',' ta2 '===>>' hb '//' sb '//' tb1 ',' eb ',' tb2 '|]'" (at level 50, no associativity).
 
 Inductive coarsestep : progstate -> progstate -> Prop :=
@@ -476,8 +474,6 @@ Proof with simpl; auto.
   eauto.
   eauto.
 Qed.
-
-
 
 Example Example3 : forall heap sync ta tb,
   [| heap // sync // ta, IFE (EConst 2) e+ (EConst 3) THEN (EConst 5) ELSE (EConst 6), tb ===>*
@@ -647,7 +643,7 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
 | T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
 | T_Plus      : forall a b h s ta tb, 
                 has_type h s a ta ->
-                has_type h s a tb ->
+                has_type h s b tb ->
                 has_type h s (EPlus a b) (seq_comp_many [ta, tb, prim_type Plus])
 | T_Minus     : forall a b h s ta tb, 
                 has_type h s a ta ->
@@ -702,6 +698,15 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
   has_type h s (EInAtomic e) t
 (* We omit wrong, because we have no EWrong *).
 
+Tactic Notation "ht_cases" tactic(first) ident(c) :=
+  first;
+  [ Case_aux c "T_Const" | Case_aux c "T_SyncLoc" | Case_aux c "T_Plus"
+  | Case_aux c "T_Minus" | Case_aux c "T_Assert" | Case_aux c "T_NewLock" 
+  | Case_aux c "T_Acquire" | Case_aux c "T_Release" | Case_aux c "T_Read"
+  | Case_aux c "T_ReadRace" | Case_aux c "T_Assgn" | Case_aux c "T_AssgnRace"
+  | Case_aux c "T_Let" | Case_aux c "T_If" | Case_aux c "T_While" 
+  | Case_aux c "T_Atomic" | Case_aux c "T_InAtomic" ].
+
 Hint Constructors has_type.
 
 Definition well_typed (h:heap) (s:sync_state) (et: thread * atom) : Prop :=
@@ -717,28 +722,16 @@ Lemma heap_change_well_typed :
     value e ->
     has_type h s e TBoth ->
     well_typed (HHeap e p id h) s et.
-Proof.
-  intros h s (t,a) id e_new e_new_evidence WT V HT.
-  destruct t. 
-  Case "TExpr". simpl well_typed in *. induction WT.
-    SCase "T_Const". subst. auto.
-    SCase "T_SyncLoc". subst. auto.
-    SCase "T_Prim". subst. apply T_Prim with (tid:=tid) (v:=v) (s':=s'). inversion H. auto. apply Forall2_cons. 
-      (* No induction hypothesis. So sad *) admit. admit. auto.
-    SCase "T_Read". subst. apply T_Read. simpl lookup_heap. destruct beq_id. 
-      SSCase "ids are equal". exists e_new. exists e_new_evidence. reflexivity.
-      SSCase "ids aren't equal". assumption.
-    SCase "T_ReadRace". subst. apply T_ReadRace. simpl  lookup_heap. destruct beq_id.
-      SSCase "ids are equal". exists e_new. exists e_new_evidence. reflexivity.
-      SSCase "ids aren't equal". assumption;
-    SCase "T_Assgn". eauto.
-    SCase "T_AssgnRace". eauto.
-    SCase "T_Let". admit. (* Not dealing with lets for the time being *)
-    SCase "T_IF". eauto.
-    SCase "T_While". eauto.
-    SCase "T_Atomic". eauto.
-    SCase "T_Inatomic". eauto.
-  Case "Wrong". destruct a; auto.
+Proof with simpl; auto; constructor.
+  intros h s (t,a) id e_new e_new_evidence WT V HT. destruct t.
+  Case "TExpr". simpl in *. ht_cases (induction WT) SCase;
+    (* Knock out silly cases *)
+    simpl; auto; constructor;
+    try (apply IHWT1 in HT; assumption); try (apply IHWT2 in HT; assumption);
+    (* Heap-relevant cases *)
+    simpl lookup_heap; destruct beq_id; eauto.
+    SCase "T_Let". admit. (* Not dealing  with let *)
+  Case "TWrong". destruct a; auto.
 Qed.
 
 Lemma sync_change_well_typed : 
@@ -746,16 +739,10 @@ Lemma sync_change_well_typed :
     well_typed h s et -> 
     well_typed h s' et.
 Proof with simpl; auto.
-intros. induction et as [e t]. induction e.
-simpl in *.
-Case "TExpr e". induction H; auto.
-  SCase "EPrim". inversion H0. 
-    SSCase "has_type". Check T_Prim. apply T_Prim with (tid:=tid) (v:=v) (s':=s'0). 
-      SSSCase "Forall2". inversion H; subst... apply Forall2_cons. admit. admit. 
-      SSSCase "Forall". split; auto. admit.
-Case "Wrong". induction t; inversion H. auto.
+intros. destruct et. destruct t. simpl in *. ht_cases (induction H) Case;
+try constructor; try assumption.
+auto.
 Qed.
-
 
 Theorem assgn_progress : forall e T id c h s (ta tb : list (thread * atom)),
     has_type h s e T ->
