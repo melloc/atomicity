@@ -282,13 +282,13 @@ Fixpoint contains_inatom e : bool :=
 end.
 
 Fixpoint contains_inatom_threads (ts : list thread) : bool :=
-  fold_left 
-  orb 
-  (map (fun t => match t with 
-                  | TExpr e => contains_inatom e
-                  | _ => false
-                end) ts)
-  false.
+match ts with
+| [] => false
+| t::tl => match t with
+           | TExpr e => contains_inatom e || contains_inatom_threads tl
+           | _       => false
+           end
+end.
 
 
 
@@ -982,6 +982,82 @@ Proof with simpl; auto.
       SSSCase "===>". apply Step. apply SInAtom1 with (ae:=ae)...
 Qed.
 
+Inductive finished : (thread * atom) -> Prop :=
+| FExp   : forall e a, value e -> finished (TExpr e, a)
+| FWrong : forall a, finished (Wrong, a).
+
+Hint Constructors finished.
+
+Lemma finished_noatom : forall l, 
+                        Forall finished l -> 
+                        contains_inatom_threads (fst (split l)) = false.
+Proof with simpl; auto.
+intros.
+assert (forall (A :Type) (a : A) b, a::b = [a] ++ b); auto.
+induction H; auto; rewrite H0; rewrite fst_split_comm2. inversion H...  
+inversion H2; simpl... admit. (* Not doing functions *)
+Qed.
+
+Theorem progress :
+  forall h s (ts : list (thread * atom)), 
+    Forall (well_typed h s) ts ->
+    Forall finished ts \/ 
+    exists ta tb e a, ts = ta ++ (TExpr e, a)::tb /\ (* result_type e R /\  *)
+    exists C ae e' h' s', D e C ae /\
+                            [| h // s // ae ===> h' // s' // e' |] /\
+                            [| h // s // fst (split ta), e, fst (split tb) ===>> 
+                               h'// s'// fst (split ta), (plug e' C), fst (split tb) |] /\ Forall (well_typed h' s') ts.
+Proof with simpl; auto. 
+intros. induction H. left... inversion IHForall. destruct x. induction t. induction e. 
+Case "EConst". left...
+Case "ESyncLoc". left...
+Case "EFunction". left...
+Case "i %% c". right. exists []. exists l. exists (i0 %% c). exists a0.  split...
+               exists C_hole. exists (i0 %% c). inversion H. admit.
+               SCase "CNone". inversion H7. inversion H8. exists x. exists h. exists s. split... split... 
+                 SSCase "===>". apply SLookup with (p:=x0); auto. split.
+                 SSCase "===>>". apply CoarseStep with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l))...
+                   SSSCase "noatom ta2". apply finished_noatom...
+                   SSSCase "noatom tb2". apply finished_noatom... 
+                   SSSCase "===>". apply Step with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l)).
+                                   apply SLookup with (p:=x0)...
+                                   apply Forall_cons...
+               SCase "CRace". inversion H7. inversion H8. exists x. exists h. exists s. split... split... 
+                 SSCase "===>". apply SLookup with (p:=x0); auto. split.
+                 SSCase "===>>". apply CoarseStep with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l))...
+                   SSSCase "noatom ta2". apply finished_noatom...
+                   SSSCase "noatom tb2". apply finished_noatom... 
+                   SSSCase "===>". apply Step with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l)).
+                                   apply SLookup with (p:=x0)...
+                                   apply Forall_cons...
+Case "i % c ::= e". right. exists []. exists l. exists (i0 % (c) ::= e). exists a0. split...
+                    admit.
+Case "e1; e2". admit.
+Case "EAssert". admit.
+Case "a + b". admit.
+Case "a - b". admit.
+Case "ENewLock". admit.
+Case "EAcquire". admit.
+Case "ERelease". admit.
+Case "EApp". admit. (* Not doing functions *)
+Case "EIf". admit.
+Case "EWhile". admit.
+Case "ELet". admit. 
+Case "EAtomic". admit.
+Case "EInAtomic". admit.
+left...
+right... inversion_clear H1 as [ta]. inversion_clear H2 as [tb]. inversion_clear H1 as [e]. inversion_clear H2 as [a].
+exists (x::ta). exists tb. exists e. exists a. inversion_clear H1. split. rewrite H2. auto.
+inversion_clear H3 as [C]. inversion_clear H1 as [ae]. inversion_clear H3 as [e']. inversion_clear H1 as [h']. inversion_clear H3 as [s']. inversion_clear H1. inversion_clear H4. inversion_clear H5.
+exists C. exists ae. exists e'. exists h'. exists s'. split; auto. split; auto. split; auto. inversion H4.
+apply CoarseStep with (ta1:=fst (split (x::ta))) (ta2:=fst (split tb)) (tb1:=fst (split (x::ta))) (tb2:=fst (split tb)); subst.
+
+ 
+admit. admit. admit. admit.
+apply Step... admit. 
+apply Forall_cons... admit.
+Qed.
+
 Lemma values_dont_step : forall h h' s s' e e' ta tb ta' tb',
   value e -> not ([| h // s // ta, e, tb ===>  h' // s' // ta', e', tb' |]).
 Proof.
@@ -1002,7 +1078,7 @@ Inductive next : heap -> sync_state -> heap -> sync_state -> exp -> exp -> Prop 
 Theorem preservation_thread : forall  e' h' s' h s e T, 
   has_type h s e T ->
   next h s h' s' e e' ->
-  has_type h' s' e' T
+  has_type h' s' e' T.
 Proof with simpl; auto.
   intros.  ht_cases (induction H) Case.
   Case "T_Subtyp". admit.
