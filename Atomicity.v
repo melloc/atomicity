@@ -684,10 +684,14 @@ Inductive result_type : exp -> result -> Prop :=
               result_type e te ->
               result_type (EInAtomic e) te.
 
+(* We folded our primitives into the type  *)
 Inductive has_type : heap -> sync_state -> exp -> atom -> Prop := 
-(* | T_subtyp    :  *)
+| T_Subtyp    : forall h s e ta tb,
+                has_type h s e ta ->
+                has_type h s e (lub ta tb)
 | T_Const     : forall h s n, has_type h s (EConst n) TBoth
 | T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
+| T_Function  : forall h s lids body, has_type h s (EFunction lids body) TBoth
 | T_Plus      : forall a b h s ta tb, 
                 has_type h s a ta ->
                 has_type h s b tb ->
@@ -750,7 +754,8 @@ Inductive has_type : heap -> sync_state -> exp -> atom -> Prop :=
 
 Tactic Notation "ht_cases" tactic(first) ident(c) :=
   first;
-  [ Case_aux c "T_Const" | Case_aux c "T_SyncLoc" | Case_aux c "T_Plus"
+  [ Case_aux c "T_Subtyp"
+  | Case_aux c "T_Const" | Case_aux c "T_SyncLoc" | Case_aux c "T_Function" | Case_aux c "T_Plus"
   | Case_aux c "T_Minus" | Case_aux c "T_Assert" | Case_aux c "T_NewLock" 
   | Case_aux c "T_Acquire" | Case_aux c "T_Release" | Case_aux c "T_Read"
   | Case_aux c "T_ReadRace" | Case_aux c "T_Assgn" | Case_aux c "T_AssgnRace"
@@ -766,6 +771,9 @@ match et with
 | _ => False
 end.
 
+
+(* Prove that if a value is added to the heap in a well-typed expression, it will remain well-typed.
+Note that we did omit lets for this *)
 Lemma heap_change_well_typed : 
   forall h s et id e p, 
     well_typed h s et -> 
@@ -784,6 +792,8 @@ Proof with simpl; auto; constructor.
   Case "TWrong". destruct a; auto.
 Qed.
 
+(* Similar for the sync heap. Finishing the lock cases just requires redesigning our sync
+   heap in the same way as our heap *)
 Lemma sync_change_well_typed : 
   forall h s s' et, 
     well_typed h s et -> 
@@ -792,7 +802,7 @@ Proof with simpl; auto.
 intros. induction et as [e t]. induction e.
 simpl in *.
 Case "TExpr e". induction H; auto.
-  SCase "ENewLock". admit.
+  SCase "ENewLock". admit. 
   SCase "EAcquire". admit.
   SCase "ERelease". admit.
 Case "Wrong". induction t; inversion H. auto.
@@ -855,9 +865,11 @@ Theorem progress_thread :
          h' // s' // fst (split ta), (plug e' C), fst (split tb) |] /\ Forall (well_typed h' s') tb /\ Forall (well_typed h' s') ta.
 Proof with simpl; auto.
   intros. 
-  induction H1.
+  ht_cases (induction H1) Case. 
+  Case "T_Subtyp". destruct IHhas_type...
   Case "T_Const". left...
   Case "T_SyncLoc". left...
+  Case "T_Function". left...
   Case "T_Plus". destruct IHhas_type1... solve_R H2. 
     SCase "value a". right. destruct IHhas_type2... solve_R H2.
       SSCase "value b". inversion H2 as [R]; subst. inversion H4; subst.
@@ -976,22 +988,44 @@ Proof.
 intros. inversion H. unfold not. intros.
 Admitted.
 
-(* Lemma values_dont_step : forall h h' s s' e e' ta tb ta' tb',  *)
-(*   value e ->  *)
-(*   (not ([| h // s // ta, e, tb ===>  h' // s' // ta', e', tb' |])) \/ *)
-(*   exists  *)
-(* (*  *) *)
-
-Theorem preservation_thread : forall h s t t' ta tb T,
-  well_typed h s ((TExpr t), T) ->
-  value t \/ exists h' s' tb',
-  [| h // s // ta, t, tb ===> h' // s' // ta, t', tb' |] ->
-  well_typed h s ((TExpr t'),T) \/ value t.
-Proof.
-intros. generalize dependent t'. induction H. left. exists h. exists s. exists tb. intros. apply values_dont_step in H. inversion H. apply VConst.
-exists h. exists s. exists tb. intros. apply values_dont_step in H. inversion H. apply VSyncLoc.
-
-admit.
+(* Next enforces that either an expression steps, or it is a value *)
+Inductive next : heap -> sync_state -> heap -> sync_state -> exp -> exp -> Prop :=
+| NStep : forall e C ae e' h h' s s', 
+          D e C ae -> 
+          [| h // s // ae ===> h' // s' // e' |] ->
+          [| h // s // e  ===> h' // s' // (plug e' C) |] ->
+          next h s h' s' e e'
+| NValue: forall e h s,
+          value e ->
+          next h s h s e e.
+          
+Theorem preservation_thread : forall  e' h' s' h s e T, 
+  has_type h s e T ->
+  next h s h' s' e e' ->
+  has_type h' s' e' T
+Proof with simpl; auto.
+  intros.  ht_cases (induction H) Case.
+  Case "T_Subtyp". admit.
+  Case "T_Const". intros. inversion H0... inversion H2...
+  Case "T_SyncLoc". intros. inversion H0... inversion H2...
+  Case "T_Function". intros. inversion H0... inversion H2...
+  Case "T_Plus". admit. 
+  Case "T_Minus". admit.
+  Case "T_Assert". admit. 
+  (* intros. simpl. destruct te. simpl. apply IHhas_type. inversion H0. subst.  admit. admit; auto. simpl. *)
+  (* stuck *)
+  Case "T_NewLock". admit.
+  Case "T_Acquire". admit.
+  Case "T_Release". admit.
+  Case "T_Read". admit.
+  Case "T_ReadRace". admit.
+  Case "T_Assgn". admit.
+  Case "T_AssgnRace". admit.
+  Case "T_Let". admit.
+  Case "T_If". admit.
+  Case "T_While". admit.
+  Case "T_Atomic". admit.
+  Case "T_InAtomic". admit.
 Qed.
  
   
