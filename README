@@ -1,0 +1,50 @@
+======
+README
+======
+
+Authors: Cody Mello and Liam Elberty
+
+About
+=====
+
+This is an attempt at formalizing the paper "Types for Atomicity" by Shaz
+Qadeer and Cormac Flanagan. We did this as a project for our class, CS195X.
+
+Status and Review
+=================
+
+We finished progress for a single thread, and are part way through progress
+across all threads.
+
+We have very little preservation. We consistently got stuck with issues
+relating to when threads step and when they are values. Our latest solution
+to this was to create a next relation that related two different expressions,
+next. In next,
+ NStep related them if the first could take a step, and NValue related them
+ if it did not step
+and was a value.
+
+We ended up folding the list of primitives into our relations rather than
+having a single multi-argument primitive. While we understood the general
+idea of inducting over the size of the expression (after spending a long
+time on heap_change_well_typed using this technique and finally realizing
+our inductive hypothesis over the size was too weak!), we decided not to
+use it as it would require a complete restructure of the progress proof.
+While it is certainly not a clean solution, we figured it would be better
+to make progress (pun lolz) with a poorly structured type than not.
+
+We ommitted lets and function applications, as mentioned previously.
+
+Unfortunately, we were not able to demonstrate anything about movers, due
+to the difficulties we encountered with trying to demonstrate properties
+of a multi-threaded program in general. We also spent a lot of time trying
+to determine how to handle arguments for primitives and functions such that
+they could be variadic and multi-arity respectively.
+
+Looking back, there are a number of things that we would have done
+differently. We would have been less hesitant to alter the language's
+definition as put forth by the paper, and would have sought better ways of
+expressing the language in Coq. We would have also approached the project
+from a more top-down approach and admit things first, and then prove them
+later. In the end, we feel that we learned a lot about formalizing a language
+and proving its properties.
