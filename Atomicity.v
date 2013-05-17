@@ -1195,9 +1195,7 @@ Proof with simpl; auto.
   Case "T_Const". intros. inversion H0... inversion H2...
   Case "T_SyncLoc". intros. inversion H0... inversion H2...
   Case "T_Function". intros. inversion H0... inversion H2...
-  Case "T_Plus". intros. simpl. induction a0. inversion H. subst. induction b0. inversion H0. simpl. inversion H1. subst. inversion H4. subst.
-
-induction a0. inversion H. admit. subst. induction b0. inversion H0. admit. simpl. subst. inversion H1.
+  Case "T_Plus". admit.
   Case "T_Minus". admit.
   Case "T_Assert". admit. 
   (* intros. simpl. destruct te. simpl. apply IHhas_type. inversion H0. subst.  admit. admit; auto. simpl. *)
