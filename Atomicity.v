@@ -1,14 +1,15 @@
- Require Import Coq.Arith.EqNat.
- Require Import Coq.Arith.Le.
- Require Import Coq.Arith.Lt.
- Require Import Coq.MSets.MSetList.
- Require Import Coq.FSets.FMapList.
- Require Import Coq.Strings.String.
- Require Import Coq.Logic.Decidable.
- Require Import Omega.
- Require Import SfLib.
- Require Import ListExt.
- Require Import Rel.
+Require Import Coq.Arith.EqNat.
+Require Import Coq.Arith.Le.
+Require Import Coq.Arith.Lt.
+Require Import Coq.MSets.MSetList.
+Require Import Coq.FSets.FMapList.
+Require Import Coq.Strings.String.
+Require Import Coq.Logic.Decidable.
+Require Import Omega.
+Require Import SfLib.
+Require Import ListExt.
+Require Import Rel.
+Require Import Recdef.
 
 Inductive conflict : Type :=
   | CNone : conflict
@@ -584,6 +585,52 @@ Inductive atom : Set :=
 | TRight : atom
 | TBoth : atom.
 
+(* Axiom has_type : exp -> atom -> Prop. *)
+
+(* Lemma 
+For all threads t, all output states s, if P typechecks then there
+exists some reduced P' such that P' steps to s for all threads.
+*)
+
+(* Mover function *)
+
+(* Axiom  has_type_dec : forall e a,  *)
+(*   {has_type e a} + {~ has_type  e a}. *)
+
+(* Definition get_type e : atom := *)
+(*   if (has_type_dec e TTop) then TTop *)
+(*   else if (has_type_dec e TAtom) then TAtom *)
+(*   else if (has_type_dec e TLeft) then TLeft *)
+(*   else if (has_type_dec e TRight) then TRight *)
+(*   else TBoth. *)
+
+(* Hint Transparent move_right. *)
+
+(* Eval  in (move_right [((EConst 1), Id 1), ((EConst 2), Id 2)]).  *)
+
+
+(* Eval  compute in (move_right [((EConst 1), Id 1), ((EConst 2), Id 2)]). *)
+
+(* Eval simpl in (List.length [1]). *)
+
+(* Fixpoint reorder_int (beg : list (exp * id)) (tail : list (exp * id)) : list (exp * id) := *)
+(*     match tail with  *)
+(*       | [] => (reverse beg) *)
+(*       | (e i) ::rest =>  *)
+(*         match (get_type_dec e) with *)
+(*           | TRight =>  *)
+(*             match (move_right tail) with  *)
+              
+                        
+(*           | TLeft =>  *)
+(*           | TBoth => *)
+(*           (* do nothing for TAtom and TTop *) *)
+(*           | _ => rerder_int (e i)::beg rest *)
+(*     end. *)
+
+(* Fixpoint reorder (l : list (exp * id)) : list (exp * id) := *)
+(*   reorder_int [] l. *)
+
 Fixpoint lub (a1 a2: atom) : atom  := 
   match a1, a2 with
     | _, TTop => TTop
@@ -685,6 +732,7 @@ Inductive result_type : exp -> result -> Prop :=
               result_type (EInAtomic e) te.
 
 (* We folded our primitives into the type  *)
+
 Inductive has_type : exp -> atom -> Prop := 
 | T_Subtyp    : forall e ta tb,
                 has_type e ta ->
@@ -756,6 +804,30 @@ Tactic Notation "ht_cases" tactic(first) ident(c) :=
   | Case_aux c "T_Atomic" | Case_aux c "T_InAtomic" ].
 
 Hint Constructors has_type.
+
+Fixpoint get_type (e: exp) : atom :=
+  match e with 
+    | EConst _ => TBoth
+    | ESyncLoc _ => TBoth 
+    | EFunction _ body => get_type body
+    | EId _ CNone => TBoth
+    | EId _ CRace => TAtom
+    | EAssgn _ CNone e => seq_comp (get_type e) TBoth
+    | EAssgn _ CRace e => seq_comp (get_type e) TAtom
+    | ESeq e1 e2 => seq_comp (get_type e1) (get_type e2)
+    | EAssert e  => (seq_comp (get_type e) (prim_type Assert))
+    | EPlus ea eb => (seq_comp_many [get_type ea, get_type eb, prim_type Plus])
+    | EMinus ea eb => (seq_comp_many [get_type ea, get_type eb, prim_type Plus])
+    | ENewLock  _ => prim_type NewLock
+    | EAcquire  _ => prim_type Acquire
+    | ERelease  _ => prim_type Release
+    | EApp _ _ _ => TTop (* Not dealing with application *)
+    | EIf c b1 b2 => seq_comp (get_type c) (lub (get_type b1) (get_type b2))
+    | EWhile c b => seq_comp (get_type c) (iterative_closure (seq_comp (get_type c) (get_type b)))
+    | ELet _ _ _ => TTop (* Not dealing with application *)
+    | EAtomic e  => get_type e
+    | EInAtomic e => get_type e
+  end.
 
 Definition well_typed (et: thread * atom) : Prop :=
 match et with
@@ -900,7 +972,6 @@ Definition env_consistent (h : heap) (s : sync_state) (e : exp) := heap_consiste
 
 Ltac solve_R H := inversion H as [R]; exists R; solve_by_inversion_step auto.
 Ltac solve_env H1 H2 H3 := inversion H1; unfold env_consistent; inversion H2; inversion H3; auto. 
-
 
 
 Theorem progress_thread : 
@@ -1147,3 +1218,96 @@ Proof with simpl; auto.
   Case "T_Atomic". admit.
   Case "T_InAtomic". admit.
 Qed.
+
+
+
+(* reordering functions and lemmas *)
+
+Fixpoint move_right_l (l : list (exp * id)) (len : nat) : list (exp * id) :=
+  match len with
+    | 0 => []
+    | S n =>
+      match l with
+        | [] => [] (* impossible *)
+        | [a] => [a]
+        | a1::(a2::tl) => 
+          if (beq_id (snd a1) (snd a2)) then l
+          else  match get_type (fst a1), get_type (fst a2) with
+                  | TRight, TRight => a2::(move_right_l (a1::tl) n)
+                  | TRight, TLeft => a2::(move_right_l (a1::tl) n)
+                  | TRight, TBoth => a2::(move_right_l (a1::tl) n)
+                  | TBoth, TRight => a2::(move_right_l (a1::tl) n)
+                  | TBoth, TLeft => a2::(move_right_l (a1::tl) n)
+                  | TBoth, TBoth => a2::(move_right_l (a1::tl) n)
+                  | _,_ => l
+                end
+      end
+  end.
+
+Fixpoint move_right (l : list (exp * id)) : list (exp * id) :=
+  move_right_l l (List.length l).
+
+Fixpoint move_left_l (l : list (exp * id)) (len : nat) : list (exp * id) :=
+  match len with
+    | 0 => []
+    | S n =>
+      match l with
+        | [] => [] (* impossible *)
+        | [a] => [a]
+        | a1::(a2::tl) => 
+          if (beq_id (snd a1) (snd a2)) then l
+          else  match get_type (fst a1), get_type (fst a2) with
+                  | TLeft, TRight => a2::(move_left_l (a1::tl) n)
+                  | TLeft, TLeft => a2::(move_left_l (a1::tl) n)
+                  | TLeft, TBoth => a2::(move_left_l (a1::tl) n)
+                  | TBoth, TRight => a2::(move_left_l (a1::tl) n)
+                  | TBoth, TLeft => a2::(move_left_l (a1::tl) n)
+                  | TBoth, TBoth => a2::(move_left_l (a1::tl) n)
+                  | _,_ => l
+                end
+      end
+  end.
+
+Fixpoint move_left (l : list (exp * id)) : list (exp * id) :=
+  rev (move_left_l (rev l) (List.length l)).
+
+Fixpoint reorder (l : list (exp * id)) : list (exp * id) := admit.
+
+(* Finds an inatomic subexpression in t, if it exists *)
+Fixpoint find_inatom (t : thread) : option exp := admit.
+
+(* decomposes a program (list of threads) into a series of small steps, labelled by thread id *)
+Fixpoint decomposition (ts : list thread) : (list (exp * id)) := admit.
+
+
+(* We took out the heap because we know that everything in our heap is a TBoth, and thus don't
+need to include it in the tc relation *)
+Inductive tc : list thread -> Prop :=
+| Typecheck : forall (h : heap) (s : sync_state) (tes : list (thread * atom)),
+  Forall well_typed tes ->
+  (forall (t : thread) (e : exp), In t (fst (split tes)) ->
+    find_inatom t = Some (EInAtomic e) ->
+    exists (context: C), t = TExpr (plug (EInAtomic e) context)) ->
+  tc (fst (split tes)).
+
+
+
+(* 
+
+In English:
+
+Forall programs P that final-step to S such that P decomposes into an execution 
+trace E, if P typechecks, then there exists some P' that can final-step to S, and such
+that P' decomposes to E' and E' is equivalent to the reordering of E. 
+
+*)
+
+Lemma reduction : forall (ts : list thread) (s : progstate) (e : list (exp * id)),
+  many_steps (ProgState HEmpty empty_sync ts) s ->
+  decomposition ts = e ->
+  tc ts ->
+  exists (ts' : list thread) (e' : list (exp * id)), 
+    many_steps (ProgState HEmpty empty_sync ts') s /\ 
+    decomposition ts' =  e' /\ 
+    (reorder e) = e'. 
+Admitted.
