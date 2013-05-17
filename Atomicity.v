@@ -686,9 +686,6 @@ Inductive result_type : exp -> result -> Prop :=
 
 (* We folded our primitives into the type  *)
 Inductive has_type : exp -> atom -> Prop := 
-| T_Subtyp    : forall e ta tb,
-                has_type e ta ->
-                has_type e (lub ta tb)
 | T_Const     : forall n, has_type  (EConst n) TBoth
 | T_SyncLoc   : forall id, has_type (ESyncLoc id) TBoth
 | T_Function  : forall lids body, has_type (EFunction lids body) TBoth
@@ -747,8 +744,8 @@ Inductive has_type : exp -> atom -> Prop :=
 
 Tactic Notation "ht_cases" tactic(first) ident(c) :=
   first;
-  [ Case_aux c "T_Subtyp"
-  | Case_aux c "T_Const" | Case_aux c "T_SyncLoc" | Case_aux c "T_Function" | Case_aux c "T_Plus"
+  [ 
+  Case_aux c "T_Const" | Case_aux c "T_SyncLoc" | Case_aux c "T_Function" | Case_aux c "T_Plus"
   | Case_aux c "T_Minus" | Case_aux c "T_Assert" | Case_aux c "T_NewLock" 
   | Case_aux c "T_Acquire" | Case_aux c "T_Release" | Case_aux c "T_Read"
   | Case_aux c "T_ReadRace" | Case_aux c "T_Assgn" | Case_aux c "T_AssgnRace"
@@ -916,7 +913,6 @@ Theorem progress_thread :
 Proof with simpl; auto.
   intros. 
   ht_cases (induction H1) Case. 
-  Case "T_Subtyp". destruct IHhas_type...
   Case "T_Const". left...
   Case "T_SyncLoc". left...
   Case "T_Function". left...
@@ -1058,7 +1054,7 @@ Case "EConst". left...
 Case "ESyncLoc". left...
 Case "EFunction". left...
 Case "i %% c". right. exists []. exists l. exists (i0 %% c). exists a0.  split...
-               exists C_hole. exists (i0 %% c). inversion H;  inversion H0; inversion H8; inversion H10. admit.
+               exists C_hole. exists (i0 %% c). inversion H;  inversion H0; inversion H8; inversion H10. 
                SCase "CNone". exists v. exists h. exists s. split... split... 
                  SSCase "===>". apply SLookup with (p:=p0); auto. split.
                  SSCase "===>>". apply CoarseStep with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l))...
@@ -1119,17 +1115,18 @@ Inductive next : exp -> exp -> Prop :=
           value e ->
           next e e.
           
-Theorem preservation_thread : forall  e' e T, 
+Theorem preservation_thread : forall T e e', 
   has_type e T ->
   next e e' ->
   has_type e' T.
 Proof with simpl; auto.
-  intros. generalize dependent e'.  ht_cases (induction H) Case.
-  Case "T_Subtyp". admit.
+  intros. generalize dependent e'. ht_cases (induction H) Case.
   Case "T_Const". intros. inversion H0... inversion H2...
   Case "T_SyncLoc". intros. inversion H0... inversion H2...
   Case "T_Function". intros. inversion H0... inversion H2...
-  Case "T_Plus". admit. 
+  Case "T_Plus". intros. simpl. induction a0. inversion H. subst. induction b0. inversion H0. simpl. inversion H1. subst. inversion H4. subst.
+
+induction a0. inversion H. admit. subst. induction b0. inversion H0. admit. simpl. subst. inversion H1.
   Case "T_Minus". admit.
   Case "T_Assert". admit. 
   (* intros. simpl. destruct te. simpl. apply IHhas_type. inversion H0. subst.  admit. admit; auto. simpl. *)
