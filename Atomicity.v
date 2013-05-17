@@ -1268,6 +1268,8 @@ Fixpoint move_left_l (l : list (exp * id)) (len : nat) : list (exp * id) :=
 Fixpoint move_left (l : list (exp * id)) : list (exp * id) :=
   rev (move_left_l (rev l) (List.length l)).
 
+(* Takes in a list of expressions and ids that represents an execution trace, and reorders
+   it according to the left and right movers. *)
 Fixpoint reorder (l : list (exp * id)) : list (exp * id) := admit.
 
 (* Finds an inatomic subexpression in t, if it exists *)
