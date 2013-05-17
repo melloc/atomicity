@@ -577,7 +577,7 @@ Qed.
 (******** Typing rules and proofs **************)
 
 
-Inductive atom : Type  := 
+Inductive atom : Set := 
 | TTop : atom
 | TAtom : atom
 | TLeft : atom
@@ -685,71 +685,64 @@ Inductive result_type : exp -> result -> Prop :=
               result_type (EInAtomic e) te.
 
 (* We folded our primitives into the type  *)
-Inductive has_type : heap -> sync_state -> exp -> atom -> Prop := 
-| T_Subtyp    : forall h s e ta tb,
-                has_type h s e ta ->
-                has_type h s e (lub ta tb)
-| T_Const     : forall h s n, has_type h s (EConst n) TBoth
-| T_SyncLoc   : forall h s id, has_type h s (ESyncLoc id) TBoth
-| T_Function  : forall h s lids body, has_type h s (EFunction lids body) TBoth
-| T_Plus      : forall a b h s ta tb, 
-                has_type h s a ta ->
-                has_type h s b tb ->
-                has_type h s (EPlus a b) (seq_comp_many [ta, tb, prim_type Plus])
-| T_Minus     : forall a b h s ta tb, 
-                has_type h s a ta ->
-                has_type h s b tb ->
-                has_type h s (EMinus a b) (seq_comp_many [ta, tb, prim_type Minus])
-| T_Assert    : forall e h s te,
-                has_type h s e te ->
-                has_type h s (EAssert e) (seq_comp te (prim_type Assert))
-| T_NewLock   : forall id h s,
-                s id = None ->
-                has_type h s (ENewLock id) (prim_type NewLock)
-| T_Acquire   : forall id h s tid,
-                s id = Some tid ->
-                has_type h s (EAcquire id) (prim_type Acquire)
-| T_Release   : forall id h s tid,
-                s id = Some tid ->
-                has_type h s (ERelease id) (prim_type Release)
+Inductive has_type : exp -> atom -> Prop := 
+| T_Subtyp    : forall e ta tb,
+                has_type e ta ->
+                has_type e (lub ta tb)
+| T_Const     : forall n, has_type  (EConst n) TBoth
+| T_SyncLoc   : forall id, has_type (ESyncLoc id) TBoth
+| T_Function  : forall lids body, has_type (EFunction lids body) TBoth
+| T_Plus      : forall a b ta tb, 
+                has_type a ta ->
+                has_type b tb ->
+                has_type (EPlus a b) (seq_comp_many [ta, tb, prim_type Plus])
+| T_Minus     : forall a b ta tb, 
+                has_type a ta ->
+                has_type b tb ->
+                has_type (EMinus a b) (seq_comp_many [ta, tb, prim_type Minus])
+| T_Assert    : forall e te,
+                has_type e te ->
+                has_type (EAssert e) (seq_comp te (prim_type Assert))
+| T_NewLock   : forall id,
+                has_type (ENewLock id) (prim_type NewLock)
+| T_Acquire   : forall id,
+                has_type (EAcquire id) (prim_type Acquire)
+| T_Release   : forall id,
+                has_type (ERelease id) (prim_type Release)
 (* | T_Fun       : forall  *)
-| T_Read      : forall id h s,
-  (exists v p, (lookup_heap h id) = Some (exist value v p)) -> 
-  has_type h s (EId id CNone) TBoth
-| T_ReadRace  : forall id h s, 
-  (exists v p, (lookup_heap h id) = Some (exist value v p)) -> 
-  has_type h s (EId id CRace) TAtom
-| T_Assgn     : forall id h s e t, 
-  has_type h s e t -> 
-  has_type h s (EAssgn id CNone e) (seq_comp t TBoth)
-| T_AssgnRace : forall id h s e t, 
-  has_type h s e t -> 
-  has_type h s (EAssgn id CRace e) (seq_comp t TAtom)
-| T_Let      : forall id h s e1 t1 e2 t2,
-  (lookup_heap h id) = None ->
-  has_type h s e1 t1 ->
-  has_type h s e2 t2 ->
-  has_type h s (ELet id e1 e2) (seq_comp t1 t2)
-| T_If       : forall h s cond b1 b2 t1 t2 t3, 
-  has_type h s cond t1 -> 
-  has_type h s b1 t2 -> 
-  has_type h s b2 t3 -> 
-  has_type h s (EIf cond b1 b2) (seq_comp t1 (lub t2 t3))
-| T_While    : forall h s cond t1 body t2,
-  has_type h s cond t1 ->
-  has_type h s body t2 ->
-  has_type h s
-  (EWhile cond body) 
-  (seq_comp t1 (iterative_closure (seq_comp t1 t2)))
+| T_Read      : forall id,
+                has_type (EId id CNone) TBoth
+| T_ReadRace  : forall id, 
+                has_type (EId id CRace) TAtom
+| T_Assgn     : forall id e t, 
+                has_type e t -> 
+                has_type (EAssgn id CNone e) (seq_comp t TBoth)
+| T_AssgnRace : forall id e t, 
+                has_type e t -> 
+                has_type (EAssgn id CRace e) (seq_comp t TAtom)
+| T_Let      : forall id e1 t1 e2 t2,
+               has_type e1 t1 ->
+               has_type e2 t2 ->
+               has_type (ELet id e1 e2) (seq_comp t1 t2)
+| T_If       : forall cond b1 b2 t1 t2 t3, 
+               has_type cond t1 -> 
+               has_type b1 t2 -> 
+               has_type b2 t3 -> 
+               has_type (EIf cond b1 b2) (seq_comp t1 (lub t2 t3))
+| T_While    : forall cond t1 body t2,
+               has_type cond t1 ->
+               has_type body t2 ->
+               has_type (EWhile cond body) 
+                        (seq_comp t1 (iterative_closure (seq_comp t1 t2)))
 (* We omit invoke *)
-| T_Atomic   : forall h s e t,  
-  has_type h s e t -> 
-  t <> TTop ->
-  has_type h s (EAtomic e) t
-| T_InAtomic    : forall h s e t,  
-  has_type h s e t -> 
-  t <> TTop ->
-  has_type h s (EInAtomic e) t
+| T_Atomic   : forall e t,  
+               has_type e t -> 
+               t <> TTop ->
+               has_type (EAtomic e) t
+| T_InAtomic : forall e t,
+               has_type e t ->
+               t <> TTop ->
+               has_type (EInAtomic e) t
 (* We omit wrong, because we have no EWrong *).
 
 Tactic Notation "ht_cases" tactic(first) ident(c) :=
@@ -764,86 +757,137 @@ Tactic Notation "ht_cases" tactic(first) ident(c) :=
 
 Hint Constructors has_type.
 
-Definition well_typed (h:heap) (s:sync_state) (et: thread * atom) : Prop :=
+Definition well_typed (et: thread * atom) : Prop :=
 match et with
-| ((TExpr e), a) =>  has_type h s e a
+| ((TExpr e), a) =>  has_type e a
 | (Wrong, TBoth) => True
 | _ => False
 end.
 
+Inductive heap_consistent : heap -> exp -> Prop :=
+  | H_Const    : forall h n, heap_consistent h (EConst n)
+  | H_SyncLoc  : forall h id, heap_consistent h (ESyncLoc id)
+  | H_Function : forall h lids e, 
+                heap_consistent h e ->
+                heap_consistent h (EFunction lids e)
+  | H_Id       : forall h id c v p, 
+                (lookup_heap h id) = Some (exist value v p) -> 
+                heap_consistent h (EId id c)
+  | H_Assgn    : forall h id c e, 
+                heap_consistent h e ->
+                heap_consistent h (EAssgn id c e)
+  | H_Seq      : forall h e1 e2, 
+                heap_consistent h e1 ->
+                heap_consistent h e2 ->
+                heap_consistent h (e1; e2)
+  | H_Assert   : forall h e,
+                heap_consistent h e ->
+                heap_consistent h (EAssert e)
+  | H_Plus     : forall h a b,
+                heap_consistent h a ->
+                heap_consistent h b ->
+                heap_consistent h (EPlus a b)
+  | H_Minus    : forall h a b,
+                heap_consistent h a ->
+                heap_consistent h b ->
+                heap_consistent h (EMinus a b)
+  | H_NewLock  : forall h id, heap_consistent h (ENewLock id)
+  | H_Acquire  : forall h id, heap_consistent h (EAcquire id)
+  | H_Release  : forall h id, heap_consistent h (ERelease id)
+  (* | H_App      : forall h f F exps, heap_consistent h (EApp f F exps) *)
+  | H_If       : forall h cond e1 e2,
+                heap_consistent h cond ->
+                heap_consistent h e1 ->
+                heap_consistent h e2 ->
+                heap_consistent h (IFE cond THEN e1 ELSE e2)
+  | H_While    : forall h cond body, heap_consistent h (WHILE cond DO body)
+  | H_Let      : forall h id e1 e2, 
+                (lookup_heap h id) = None ->
+                heap_consistent h e1 ->
+                heap_consistent h e2 ->
+                heap_consistent h (LET id ::= e1 IN e2)
+  | H_Atomic   : forall h e, 
+                heap_consistent h e -> 
+                heap_consistent h (EAtomic e)
+  | H_InAtomic : forall h e,
+                heap_consistent h e ->
+                heap_consistent h (EInAtomic e).
 
-(* Prove that if a value is added to the heap in a well-typed expression, it will remain well-typed.
-Note that we did omit lets for this *)
-Lemma heap_change_well_typed : 
-  forall h s et id e p, 
-    well_typed h s et -> 
-    value e ->
-    has_type h s e TBoth ->
-    well_typed (HHeap e p id h) s et.
-Proof with simpl; auto; constructor.
-  intros h s (t,a) id e_new e_new_evidence WT V HT. destruct t.
-  Case "TExpr". simpl in *. (* ht_cases (induction WT) SCase; *) induction WT;
-    (* Knock out silly cases *)
-    simpl; auto; try constructor;
-    try (apply IHWT1 in HT; assumption); try (apply IHWT2 in HT; assumption);
-    (* Heap-relevant cases *)
-    simpl lookup_heap; destruct beq_id; eauto.
-    SCase "T_Let". admit. (* Not dealing  with let *)
-  Case "TWrong". destruct a; auto.
-Qed.
+Hint Constructors heap_consistent.
 
-(* Similar for the sync heap. Finishing the lock cases just requires redesigning our sync
-   heap in the same way as our heap *)
-Lemma sync_change_well_typed : 
-  forall h s s' et, 
-    well_typed h s et -> 
-    well_typed h s' et.
-Proof with simpl; auto.
-intros. induction et as [e t]. induction e.
-simpl in *.
-Case "TExpr e". induction H; auto.
-  SCase "ENewLock". admit. 
-  SCase "EAcquire". admit.
-  SCase "ERelease". admit.
-Case "Wrong". induction t; inversion H. auto.
-Qed.
+Inductive sync_consistent : sync_state -> exp -> Prop :=
+  | S_Const    : forall s n, sync_consistent s (EConst n)
+  | S_SyncLoc  : forall s id, sync_consistent s (ESyncLoc id)
+  | S_Function : forall s lids e, 
+                sync_consistent s e ->
+                sync_consistent s (EFunction lids e)
+  | S_Id       : forall s id c, 
+                 sync_consistent s (EId id c)
+  | S_Assgn    : forall s id c e, 
+                sync_consistent s e ->
+                sync_consistent s (EAssgn id c e)
+  | S_Seq      : forall s e1 e2, 
+                sync_consistent s e1 ->
+                sync_consistent s e2 ->
+                sync_consistent s (e1; e2)
+  | S_Assert   : forall s e,
+                sync_consistent s e ->
+                sync_consistent s (EAssert e)
+  | S_Plus     : forall s a b,
+                sync_consistent s a ->
+                sync_consistent s b ->
+                sync_consistent s (EPlus a b)
+  | S_Minus    : forall s a b,
+                sync_consistent s a ->
+                sync_consistent s b ->
+                sync_consistent s (EMinus a b)
+  | S_NewLock  : forall s id, 
+                s id = None ->
+                sync_consistent s (ENewLock id)
+  | S_Acquire  : forall s id tid, 
+                s id = Some tid ->
+                sync_consistent s (EAcquire id)
+  | S_Release  : forall s id tid, 
+                s id = Some tid ->
+                sync_consistent s (ERelease id)
+  (* | HApp      : forall s f F exps, sync_consistent s (EApp f F exps) *)
+  | S_If       : forall s cond e1 e2,
+                sync_consistent s cond ->
+                sync_consistent s e1 ->
+                sync_consistent s e2 ->
+                sync_consistent s (IFE cond THEN e1 ELSE e2)
+  | S_While    : forall s cond body, sync_consistent s (WHILE cond DO body)
+  | S_Let      : forall s id e1 e2, 
+                sync_consistent s e1 ->
+                sync_consistent s e2 ->
+                sync_consistent s (LET id ::= e1 IN e2)
+  | S_Atomic   : forall s e, 
+                sync_consistent s e -> 
+                sync_consistent s (EAtomic e)
+  | S_InAtomic : forall s e,
+                sync_consistent s e ->
+                sync_consistent s (EInAtomic e).
+
+Hint Constructors sync_consistent.
 
 Theorem assgn_progress : forall e T id c h s (ta tb : list (thread * atom)),
-    has_type h s e T ->
-    Forall (well_typed h s) ta ->
-    Forall (well_typed h s) tb ->
+    has_type e T ->
+    Forall well_typed ta ->
+    Forall well_typed tb ->
     value e \/ (exists C ae e' h' s',
                D e C ae /\ [|h // s // ae ===> h' // s' // e'|] /\
                [| h // s // fst (split ta), e, fst (split tb) ===> 
                   h'// s'// fst (split ta), plug e' C, fst (split tb)|] /\
-               Forall (well_typed h' s') tb /\ Forall (well_typed h' s') ta) ->
+               Forall well_typed tb /\ Forall well_typed ta) ->
     exists C0 ae0 e' h' s',
      D (id % (c) ::= e) C0 ae0 /\
      [|h // s // ae0 ===> h' // s' // e'|] /\
      [| h // s // fst (split ta), id % (c) ::= e, fst (split tb) ===> 
         h'// s'// fst (split ta), plug e' C0, fst (split tb)|] /\
-     Forall (well_typed h' s') tb /\ Forall (well_typed h' s') ta.
+     Forall well_typed tb /\ Forall well_typed ta.
 Proof with simpl; auto. intros.
 inversion H2...
-    SCase "e is a value". exists C_hole. exists (id % (c) ::= e). exists e. exists (HHeap e H3 id h). exists s.
-      split... split... split... split...
-      SSCase "tb is well-typed". induction tb.
-        SSSCase "tb = []"...
-        SSSCase "tb = a0::tb'". apply Forall_cons. eapply heap_change_well_typed.
-          SSSSCase "a0 is well-typed". solve_by_inversion_step auto.
-          SSSSCase "value e"... inversion H1; subst; try inversion H2...
-          SSSSCase "e is TBoth".
-            inversion H; subst; try inversion H3...
-            inversion H; subst; try inversion H3...
-          SSSSCase "tb is well-typed w/ new heap". apply IHtb; inversion H1...
-      SSCase "ta is well-typed". induction ta.
-        SSSCase "tb = []"...
-        SSSCase "tb = a0::tb'". apply Forall_cons. apply heap_change_well_typed.
-          SSSSCase "a0 is well-typed". solve_by_inversion_step auto.
-          SSSSCase "value e"...
-          SSSSCase "e is TBoth".
-            inversion H; subst; try inversion H3...
-            inversion H; subst; inversion H0; apply IHta; auto.
+    SCase "e is a value". exists C_hole. exists (id % (c) ::= e). exists e. exists (HHeap e H3 id h). exists s. split...
     SCase "e is an exp". inversion_clear H3 as [C]. inversion_clear H4 as [ae]. inversion_clear H3 as [e'].  
                          inversion_clear H4 as [h']. inversion_clear H3 as [s']. 
                          inversion_clear H4. inversion_clear H5. inversion_clear H6.
@@ -852,17 +896,23 @@ inversion H2...
       SSCase "===>". apply Step. apply SAssgn1 with (ae:=ae)...
 Qed.
 
+Definition env_consistent (h : heap) (s : sync_state) (e : exp) := heap_consistent h e /\ sync_consistent s e.
+
 Ltac solve_R H := inversion H as [R]; exists R; solve_by_inversion_step auto.
+Ltac solve_env H1 H2 H3 := inversion H1; unfold env_consistent; inversion H2; inversion H3; auto. 
+
+
 
 Theorem progress_thread : 
   forall e T h s (ta tb : list (thread * atom)), 
-    Forall (well_typed h s) ta ->
-    Forall (well_typed h s) tb ->
-    has_type h s e T ->
+    Forall well_typed ta ->
+    Forall well_typed tb ->
+    has_type e T ->
     (exists R, result_type e R) ->
+    env_consistent h s e ->
     value e \/ exists C ae e' h' s', D e C ae /\ [| h // s // ae ===> h' // s' // e' |] /\
       [| h // s // fst (split ta), e, fst (split tb) ===>
-         h' // s' // fst (split ta), (plug e' C), fst (split tb) |] /\ Forall (well_typed h' s') tb /\ Forall (well_typed h' s') ta.
+         h' // s' // fst (split ta), (plug e' C), fst (split tb) |] /\ Forall well_typed tb /\ Forall well_typed ta.
 Proof with simpl; auto.
   intros. 
   ht_cases (induction H1) Case. 
@@ -870,85 +920,72 @@ Proof with simpl; auto.
   Case "T_Const". left...
   Case "T_SyncLoc". left...
   Case "T_Function". left...
-  Case "T_Plus". destruct IHhas_type1... solve_R H2. 
-    SCase "value a". right. destruct IHhas_type2... solve_R H2.
-      SSCase "value b". inversion H2 as [R]; subst. inversion H4; subst.
-                        inversion H7; subst; try solve_by_inversion_step auto.
-                        inversion H9; subst; try solve_by_inversion_step auto. exists C_hole. exists (EConst n e+ EConst n0).
+  Case "T_Plus". destruct IHhas_type1... solve_R H2. solve_env H3 H1 H4.
+    SCase "value a". right. destruct IHhas_type2... solve_R H2. solve_env H3 H4 H5.
+      SSCase "value b". inversion H2 as [R]; subst. inversion H5; subst. 
+                        inversion H8; subst; try solve_by_inversion_step auto.
+                        inversion H10; subst; try solve_by_inversion_step auto. exists C_hole. exists (EConst n e+ EConst n0).
                         exists (EConst (n + n0)). exists h. exists s. split... 
-      SSCase "b is an exp". inversion_clear H3 as [C]. inversion_clear H4 as [ae]. inversion_clear H3 as [e']. 
-                            inversion_clear H4 as [h']. inversion_clear H3 as [s'].
-                            inversion_clear H4. inversion_clear H5. inversion_clear H6.
+      SSCase "b is an exp". inversion_clear H4 as [C]. inversion_clear H5 as [ae]. inversion_clear H4 as [e']. 
+                            inversion_clear H5 as [h']. inversion_clear H4 as [s'].
+                            inversion_clear H5. inversion_clear H6. inversion_clear H7.
                             exists (C_plus2 a0 C). exists ae. exists e'. exists h'. exists s'.
                             split... split... split...
         SSSCase "===>". apply Step. apply SPlus2 with (ae:=ae)...
-    SCase "a is an exp". right. inversion_clear H1 as [C]. inversion_clear H3 as [ae]. inversion_clear H1 as [e']. 
-                                inversion_clear H3 as [h']. inversion_clear H1 as [s'].
-                                inversion_clear H3. inversion_clear H4. inversion_clear H5.
+    SCase "a is an exp". right. inversion_clear H1 as [C]. inversion_clear H4 as [ae]. inversion_clear H1 as [e']. 
+                                inversion_clear H4 as [h']. inversion_clear H1 as [s'].
+                                inversion_clear H4. inversion_clear H5. inversion_clear H6.
                                 exists (C_plus1 C b0). exists ae. exists e'. exists h'. exists s'.
                                 split... split... split...
         SSSCase "===>". apply Step. apply SPlus1 with (ae:=ae)... 
-  Case "T_Minus". destruct IHhas_type1... solve_R H2. 
-    SCase "value a". right. destruct IHhas_type2... solve_R H2.
-      SSCase "value b". inversion H2 as [R]; subst. inversion H4; subst.
-                        inversion H7; subst; try solve_by_inversion_step auto.
-                        inversion H9; subst; try solve_by_inversion_step auto. exists C_hole. exists (EConst n e- EConst n0).
+  Case "T_Minus". destruct IHhas_type1... solve_R H2. solve_env H3 H1 H4. 
+    SCase "value a". right. destruct IHhas_type2... solve_R H2.  solve_env H3 H4 H5. 
+      SSCase "value b". inversion H2 as [R]; subst. inversion H5; subst.
+                        inversion H8; subst; try solve_by_inversion_step auto.
+                        inversion H10; subst; try solve_by_inversion_step auto. exists C_hole. exists (EConst n e- EConst n0).
                         exists (EConst (n - n0)). exists h. exists s. split... 
-      SSCase "b is an exp". inversion_clear H3 as [C]. inversion_clear H4 as [ae]. inversion_clear H3 as [e']. 
-                            inversion_clear H4 as [h']. inversion_clear H3 as [s'].
-                            inversion_clear H4. inversion_clear H5. inversion_clear H6.
+      SSCase "b is an exp". inversion_clear H4 as [C]. inversion_clear H5 as [ae]. inversion_clear H4 as [e']. 
+                            inversion_clear H5 as [h']. inversion_clear H4 as [s'].
+                            inversion_clear H5. inversion_clear H6. inversion_clear H7.
                             exists (C_minus2 a0 C). exists ae. exists e'. exists h'. exists s'.
                             split... split... split...
         SSSCase "===>". apply Step. apply SMinus2 with (ae:=ae)...
-    SCase "a is an exp". right. inversion_clear H1 as [C]. inversion_clear H3 as [ae]. inversion_clear H1 as [e']. 
-                                inversion_clear H3 as [h']. inversion_clear H1 as [s'].
-                                inversion_clear H3. inversion_clear H4. inversion_clear H5.
+    SCase "a is an exp". right. inversion_clear H1 as [C]. inversion_clear H4 as [ae]. inversion_clear H1 as [e']. 
+                                inversion_clear H4 as [h']. inversion_clear H1 as [s'].
+                                inversion_clear H4. inversion_clear H5. inversion_clear H6.
                                 exists (C_minus1 C b0). exists ae. exists e'. exists h'. exists s'.
                                 split... split... split...
         SSSCase "===>". apply Step. apply SMinus1 with (ae:=ae)... 
-  Case "T_Assert". right. destruct IHhas_type... inversion H2 as [R]. inversion H3; subst. exists te0...
+  Case "T_Assert". right. destruct IHhas_type... inversion H2 as [R]. inversion H4; subst. exists te0... solve_env H3 H4 H5.
     SCase "value e". exists C_hole. exists (EAssert e). exists (EConst 0). exists h. exists s.
                      split... split... apply SAssert2... admit.
                      split... apply Step. apply SAssert2... admit.
-    SCase "e is an exp". inversion_clear H3 as [C]. inversion_clear H4 as [ae]. inversion_clear H3 as [e'].
-                         inversion_clear H4 as [h']. inversion_clear H3 as [s'].
-                         inversion_clear H4. inversion_clear H5. inversion_clear H6.
+    SCase "e is an exp". inversion_clear H4 as [C]. inversion_clear H5 as [ae]. inversion_clear H4 as [e'].
+                         inversion_clear H5 as [h']. inversion_clear H4 as [s'].
+                         inversion_clear H5. inversion_clear H6. inversion_clear H7.
                          exists (C_assert C). exists ae. exists e'. exists h'. exists s'.
                          split... split... split... apply Step. apply SAssert1 with (ae:=ae)...
   Case "T_NewLock". right. exists C_hole. exists (ENewLock id). exists (ESyncLoc id). exists h. exists (update_sync s id 0). 
-                           split... split... split... split.
-    SCase "tb is well-typed". induction tb... inversion H0. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                               apply IHtb...
-    SCase "ta is well-typed". induction ta... inversion H. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                              apply IHta...
+                           inversion H3. inversion H4. split...
   Case "T_Acquire". right. exists C_hole. exists (EAcquire id). exists (ESyncLoc id). exists h. exists (update_sync s id 1).
-                           split... split...
-    SCase "===>". inversion H2. inversion H3; subst. apply SAcquire. admit. split... split... apply SAcquire. admit. split...
-    SCase "tb is well-typed". induction tb... inversion H0. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                              apply IHtb...
-    SCase "ta is well-typed". induction ta... inversion H. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                              apply IHta...
+                           inversion H3. inversion H4. split... split...
+    SCase "===>". apply SAcquire. admit. split... split... apply SAcquire. admit. 
   Case "T_Release". right. exists C_hole. exists (ERelease id). exists (ESyncLoc id). exists h. exists (update_sync s id 0).
-                           split... split...
-    SCase "===>".  inversion H2. 
-                   apply SRelease with (tid:=tid). admit. split... 
-                   apply Step. apply SRelease with (tid:=tid). admit. split... 
-    SCase "tb is well-typed". induction tb... inversion H0. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                              apply IHtb...
-    SCase "ta is well-typed". induction ta... inversion H. apply Forall_cons. apply sync_change_well_typed with (s:=s)...
-                              apply IHta...
-  Case "T_Read". right. inversion H1 as [v]. inversion H3 as [p].
+                           inversion H3. inversion H4. split... split...
+    SCase "===>". apply SRelease with (tid:=tid)... split... 
+                  apply Step. apply SRelease with (tid:=tid)...
+  Case "T_Read". right. inversion H3; inversion H1. 
                         exists C_hole. exists (id %% CNone). exists v. exists h. exists s. 
-                        split... split... apply SLookup with (p:=p)... 
-                        split... apply Step. apply SLookup with (p:=p)...
-  Case "T_ReadRace". right. inversion H1 as [v]. inversion H3 as [p].
+                        split... split... apply SLookup with (p:=p0)... 
+                        split... apply Step. apply SLookup with (p:=p0)...
+  Case "T_ReadRace". right. inversion H3; inversion H1.
                         exists C_hole. exists (id %% CRace). exists v. exists h. exists s. 
-                        split... split... apply SLookup with (p:=p)... 
-                        split... apply Step. apply SLookup with (p:=p)...
-  Case "T_Assgn". right. apply assgn_progress with (T:=t)... destruct IHhas_type... solve_R H2.
-  SCase "T_ReadRace". right. apply assgn_progress with (T:=t)... destruct IHhas_type... solve_R H2.
+                        split... split... apply SLookup with (p:=p0)... 
+                        split... apply Step. apply SLookup with (p:=p0)...
+  Case "T_Assgn". right. apply assgn_progress with (T:=t)... destruct IHhas_type... solve_R H2. solve_env H3 H4 H5. 
+  SCase "T_ReadRace". right. apply assgn_progress with (T:=t)... destruct IHhas_type... solve_R H2. solve_env H3 H4 H5.
   SCase "T_Let". admit.
-  SCase "T_If". right. destruct IHhas_type1... inversion H2; inversion H1;  exists tc...
+  SCase "T_If". right. destruct IHhas_type1... inversion H2; inversion H1;  exists tc... solve_env H3 H1 H4.
     SSCase "value cond". destruct cond; inversion H1; exists C_hole.
       SSSCase "EConst n". destruct n.
         SSSSCase "EConst 0". exists (IFE EConst 0 THEN b1 ELSE b2). exists b2. exists h. exists s. split... 
@@ -962,9 +999,9 @@ Proof with simpl; auto.
       SSSCase "EFunction". exists (IFE EFunction l cond THEN b1 ELSE b2). exists b1. exists h. exists s.
                            split... split... apply SIfV... discriminate.
                            split... apply Step. apply SIfV... discriminate.
-    SSCase "cond is an exp". inversion_clear H1 as [C]. inversion_clear H3 as [ae]. inversion_clear H1 as [e']. 
-                             inversion_clear H3 as [h']. inversion_clear H1 as [s'].
-                             inversion_clear H3. inversion_clear H4. inversion_clear H5.
+    SSCase "cond is an exp". inversion_clear H1 as [C]. inversion_clear H4 as [ae]. inversion_clear H1 as [e']. 
+                             inversion_clear H4 as [h']. inversion_clear H1 as [s'].
+                             inversion_clear H4. inversion_clear H5. inversion_clear H6.
                              exists (C_if C b1 b2). exists ae. exists e'. exists h'. exists s'.
                              split... split... split...
       SSSCase "===>". apply Step. apply SIf with (ae:=ae)... 
@@ -972,11 +1009,11 @@ Proof with simpl; auto.
                           exists (IFE cond THEN body; WHILE cond DO body ELSE EConst 0). 
                           exists h. exists s. split... 
   SCase "T_Atomic". right. exists C_hole. exists (EAtomic e). exists (EInAtomic e). exists h. exists s. split...
-  SCase "T_InAtomic". right. destruct IHhas_type... solve_R H2.
+  SCase "T_InAtomic". right. destruct IHhas_type... solve_R H2. solve_env H3 H5 H6. 
     SSCase "value e". exists C_hole. exists (EInAtomic e). exists e. exists h. exists s. split... 
-    SSCase "e is an exp". inversion_clear H4 as [C]. inversion_clear H5 as [ae]. inversion_clear H4 as [e']. 
-                          inversion_clear H5 as [h']. inversion_clear H4 as [s']. 
-                          inversion_clear H5. inversion_clear H6. inversion_clear H7.
+    SSCase "e is an exp". inversion_clear H5 as [C]. inversion_clear H6 as [ae]. inversion_clear H5 as [e']. 
+                          inversion_clear H6 as [h']. inversion_clear H5 as [s']. 
+                          inversion_clear H6. inversion_clear H7. inversion_clear H8.
                           exists (C_inatom C). exists ae. exists e'. exists h'. exists s'.
                           split... split... split...
       SSSCase "===>". apply Step. apply SInAtom1 with (ae:=ae)...
@@ -998,37 +1035,45 @@ induction H; auto; rewrite H0; rewrite fst_split_comm2. inversion H...
 inversion H2; simpl... admit. (* Not doing functions *)
 Qed.
 
+Definition env_well_typed h s (et : thread * atom) : Prop :=
+match et with
+| ((TExpr e), a) =>  env_consistent h s e
+| (Wrong, TBoth) => True
+| _ => False
+end.
+
 Theorem progress :
   forall h s (ts : list (thread * atom)), 
-    Forall (well_typed h s) ts ->
+    Forall well_typed ts ->
+    Forall (env_well_typed h s) ts ->
     Forall finished ts \/ 
     exists ta tb e a, ts = ta ++ (TExpr e, a)::tb /\ (* result_type e R /\  *)
     exists C ae e' h' s', D e C ae /\
                             [| h // s // ae ===> h' // s' // e' |] /\
                             [| h // s // fst (split ta), e, fst (split tb) ===>> 
-                               h'// s'// fst (split ta), (plug e' C), fst (split tb) |] /\ Forall (well_typed h' s') ts.
+                               h'// s'// fst (split ta), (plug e' C), fst (split tb) |] /\ Forall well_typed ts.
 Proof with simpl; auto. 
-intros. induction H. left... inversion IHForall. destruct x. induction t. induction e. 
+intros. induction H. left... destruct IHForall. inversion H0... destruct x. induction t. induction e. 
 Case "EConst". left...
 Case "ESyncLoc". left...
 Case "EFunction". left...
 Case "i %% c". right. exists []. exists l. exists (i0 %% c). exists a0.  split...
-               exists C_hole. exists (i0 %% c). inversion H. admit.
-               SCase "CNone". inversion H7. inversion H8. exists x. exists h. exists s. split... split... 
-                 SSCase "===>". apply SLookup with (p:=x0); auto. split.
+               exists C_hole. exists (i0 %% c). inversion H;  inversion H0; inversion H8; inversion H10. admit.
+               SCase "CNone". exists v. exists h. exists s. split... split... 
+                 SSCase "===>". apply SLookup with (p:=p0); auto. split.
                  SSCase "===>>". apply CoarseStep with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l))...
                    SSSCase "noatom ta2". apply finished_noatom...
                    SSSCase "noatom tb2". apply finished_noatom... 
                    SSSCase "===>". apply Step with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l)).
-                                   apply SLookup with (p:=x0)...
+                                   apply SLookup with (p:=p0)...
                                    apply Forall_cons...
-               SCase "CRace". inversion H7. inversion H8. exists x. exists h. exists s. split... split... 
-                 SSCase "===>". apply SLookup with (p:=x0); auto. split.
+               SCase "CRace". exists v. exists h. exists s. split... split... 
+                 SSCase "===>". apply SLookup with (p:=p0); auto. split.
                  SSCase "===>>". apply CoarseStep with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l))...
                    SSSCase "noatom ta2". apply finished_noatom...
                    SSSCase "noatom tb2". apply finished_noatom... 
                    SSSCase "===>". apply Step with (ta1:=[]) (ta2:=fst (split l)) (tb1:=[]) (tb2:=fst (split l)).
-                                   apply SLookup with (p:=x0)...
+                                   apply SLookup with (p:=p0)...
                                    apply Forall_cons...
 Case "i % c ::= e". right. exists []. exists l. exists (i0 % (c) ::= e). exists a0. split...
                     admit.
@@ -1046,16 +1091,15 @@ Case "ELet". admit.
 Case "EAtomic". admit.
 Case "EInAtomic". admit.
 left...
-right... inversion_clear H1 as [ta]. inversion_clear H2 as [tb]. inversion_clear H1 as [e]. inversion_clear H2 as [a].
-exists (x::ta). exists tb. exists e. exists a. inversion_clear H1. split. rewrite H2. auto.
-inversion_clear H3 as [C]. inversion_clear H1 as [ae]. inversion_clear H3 as [e']. inversion_clear H1 as [h']. inversion_clear H3 as [s']. inversion_clear H1. inversion_clear H4. inversion_clear H5.
-exists C. exists ae. exists e'. exists h'. exists s'. split; auto. split; auto. split; auto. inversion H4.
+right... inversion_clear H2 as [ta]. inversion_clear H3 as [tb]. inversion_clear H2 as [e]. inversion_clear H3 as [a].
+exists (x::ta). exists tb. exists e. exists a. inversion_clear H2. split. rewrite H3. auto.
+inversion_clear H4 as [C]. inversion_clear H2 as [ae]. inversion_clear H4 as [e']. inversion_clear H2 as [h']. inversion_clear H4 as [s']. inversion_clear H2. inversion_clear H5. inversion_clear H6.
+exists C. exists ae. exists e'. exists h'. exists s'. split... split... split... inversion H5.
 apply CoarseStep with (ta1:=fst (split (x::ta))) (ta2:=fst (split tb)) (tb1:=fst (split (x::ta))) (tb2:=fst (split tb)); subst.
 
  
 admit. admit. admit. admit.
-apply Step... admit. 
-apply Forall_cons... admit.
+apply Step... admit.
 Qed.
 
 Lemma values_dont_step : forall h h' s s' e e' ta tb ta' tb',
@@ -1065,22 +1109,22 @@ intros. inversion H. unfold not. intros.
 Admitted.
 
 (* Next enforces that either an expression steps, or it is a value *)
-Inductive next : heap -> sync_state -> heap -> sync_state -> exp -> exp -> Prop :=
+Inductive next : exp -> exp -> Prop :=
 | NStep : forall e C ae e' h h' s s', 
           D e C ae -> 
           [| h // s // ae ===> h' // s' // e' |] ->
           [| h // s // e  ===> h' // s' // (plug e' C) |] ->
-          next h s h' s' e e'
-| NValue: forall e h s,
+          next e e'
+| NValue: forall e,
           value e ->
-          next h s h s e e.
+          next e e.
           
-Theorem preservation_thread : forall  e' h' s' h s e T, 
-  has_type h s e T ->
-  next h s h' s' e e' ->
-  has_type h' s' e' T.
+Theorem preservation_thread : forall  e' e T, 
+  has_type e T ->
+  next e e' ->
+  has_type e' T.
 Proof with simpl; auto.
-  intros.  ht_cases (induction H) Case.
+  intros. generalize dependent e'.  ht_cases (induction H) Case.
   Case "T_Subtyp". admit.
   Case "T_Const". intros. inversion H0... inversion H2...
   Case "T_SyncLoc". intros. inversion H0... inversion H2...
@@ -1103,7 +1147,3 @@ Proof with simpl; auto.
   Case "T_Atomic". admit.
   Case "T_InAtomic". admit.
 Qed.
- 
-  
-
-
